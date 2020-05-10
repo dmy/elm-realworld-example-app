@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "build": "elm make src/Main.elm --output=elm.js --optimize",
+    "build": "elm make src/Main.elm --output=elm.js --optimize && elm-minify elm.js --overwrite",
     "watch": "elm-live src/Main.elm -o -- --output=elm.js --debug",
     "test": "elm-test"
   },
