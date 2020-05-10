@@ -1,6 +1,6 @@
 module Effect exposing
     ( Effect
-    , application
+    , Model, application
     , none, batch, map
     , replaceUrl, pushUrl, loadUrl
     , getTimeZone
@@ -21,7 +21,7 @@ module Effect exposing
 
 # Application
 
-@docs application
+@docs Model, application
 
 
 # Fancy effects
@@ -187,6 +187,8 @@ application config =
 -- PERFORM
 
 
+{-| The partial top level model required to perform effects.
+-}
 type alias Model r =
     { r
         | session : Session
