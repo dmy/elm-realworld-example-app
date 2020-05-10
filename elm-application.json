@@ -1,0 +1,24 @@
+{
+    "name": "dmy/elm-realworld-example-app",
+    "summary": "Elm RealWorld example application",
+    "version": "1.0.0",
+    "exposed-modules": [
+        "Effect",
+        "Main",
+        "Api",
+        "Api.Endpoint",
+        "Env",
+        "Page",
+        "Page.Article",
+        "Page.Article.Editor",
+        "Page.Blank",
+        "Page.Home",
+        "Page.Login",
+        "Page.NotFound",
+        "Page.Profile",
+        "Page.Register",
+        "Page.Settings",
+        "Remote",
+        "Session"
+    ]
+}

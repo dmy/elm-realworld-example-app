@@ -1,10 +1,6 @@
-module PaginatedList exposing (PaginatedList, fromList, map, params, total, values)
+module PaginatedList exposing (PaginatedList, decoder, fromList, map, params, total, values)
 
-import Html exposing (Html, a, li, text, ul)
-import Html.Attributes exposing (class, classList, href)
-import Html.Events exposing (onClick)
 import Json.Decode as Decode exposing (Decoder)
-import Task exposing (Task)
 import Url.Builder exposing (QueryParameter)
 
 
@@ -57,9 +53,7 @@ map transform (PaginatedList info) =
 
 {-| I decided to accept a record here so I don't mess up the argument order of the two Ints.
 -}
-params :
-    { page : Int, resultsPerPage : Int }
-    -> List QueryParameter
+params : { page : Int, resultsPerPage : Int } -> List QueryParameter
 params { page, resultsPerPage } =
     let
         offset =
@@ -68,3 +62,20 @@ params { page, resultsPerPage } =
     [ Url.Builder.string "limit" (String.fromInt resultsPerPage)
     , Url.Builder.string "offset" (String.fromInt offset)
     ]
+
+
+
+-- SERIALIZATION
+
+
+decoder : Decoder a -> Int -> Decoder (PaginatedList a)
+decoder itemDecoder resultsPerPage =
+    Decode.map2 fromList
+        (Decode.field "articlesCount" (pageCountDecoder resultsPerPage))
+        (Decode.field "articles" (Decode.list itemDecoder))
+
+
+pageCountDecoder : Int -> Decoder Int
+pageCountDecoder resultsPerPage =
+    Decode.int
+        |> Decode.map (\results -> ceiling (toFloat results / toFloat resultsPerPage))

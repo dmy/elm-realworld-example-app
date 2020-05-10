@@ -1,62 +1,37 @@
-# ![RealWorld Example App](https://cloud.githubusercontent.com/assets/556934/25448178/3e7dc5c0-2a7d-11e7-8069-06da5169dae6.png)
+# ![Elm RealWorld Example App](logo.png)
 
-👉 I gave [a talk](https://www.youtube.com/watch?v=x1FU3e0sT1I)
-to explain the principles I used to build this. I highly recommend watching it!
-
-> [Elm](http://elm-lang.org) codebase containing real world examples (CRUD, auth, advanced patterns, etc) that adheres to the [RealWorld](https://github.com/gothinkster/realworld-example-apps) spec and API.
+> ### Elm codebase containing real world examples (CRUD, auth, advanced patterns, etc) that adheres to the [RealWorld](https://github.com/gothinkster/realworld) spec and API.
 
 
-### [Demo](https://elm-spa-example.netlify.com/)&nbsp;&nbsp;&nbsp;&nbsp;[RealWorld](https://github.com/gothinkster/realworld)
+### [Demo](https://elm-realworld-example.netlify.app)
+### [Documentation](https://elm-doc-preview.netlify.app/?repo=dmy/elm-realworld-example-app)
 
-
-This codebase was created to demonstrate a fully fledged fullstack application built with [Elm](http://elm-lang.org) including CRUD operations, authentication, routing, pagination, and more.
+This codebase was created mainly to demonstrate a Single Page Application written in **Elm** using the **Effect pattern**. It was forked initialy from the great [rtfeldman/elm-spa-example](https://github.com/rtfeldman/elm-spa-example).
 
 For more information on how this works with other frontends/backends, head over to the [RealWorld](https://github.com/gothinkster/realworld) repo.
 
+
 # How it works
+The Effect pattern used in this application consists in definining an [`Effect`](https://elm-doc-preview.netlify.app/Effect?repo=dmy%2Felm-realworld-example-app#Effect) custom type that can represent all the effects that `init` and `update` functions want to produce.
 
-Check out [the full writeup](https://dev.to/rtfeldman/tour-of-an-open-source-elm-spa)!
+These effects can represent:
+* a `Cmd` value
+* a request to change the state at an upper level (for example an URL change from a subpage without an anchor)
 
-# Building
+The [`init`](https://elm-doc-preview.netlify.app/Main?repo=dmy%2Felm-realworld-example-app#init) and [`update`](https://elm-doc-preview.netlify.app/Main?repo=dmy%2Felm-realworld-example-app#update) functions are changed to use this new type, using a custom [`application`](https://elm-doc-preview.netlify.app/Effect?repo=dmy%2Felm-realworld-example-app#application) function, that turns the type into actual effects.
 
-I decided not to include a build script, since all you need for a development build is the `elm` executable, and all you need on top of that for production is Uglify.
+There are several benefits to this approach that makes it a valuable pattern for complex applications:
+* All the effects are defined in a single [`Effect`](https://elm-doc-preview.netlify.app/Effect?repo=dmy%2Felm-realworld-example-app) module, which acts as an internal API documentation for the whole application that is guaranteed to list every possible effect.
+* Effects can be inspected and tested, not like `Cmd` values. This allows to test all the application effects, including HTTP requests. See [avh4/elm-program-test](https://github.com/avh4/elm-program-test) and its [section about testing commands](https://elm-program-test.netlify.app/cmds.html#testing-programs-with-cmds).
+* Effects can represent a modification of top level model data, like the [Session](https://elm-doc-preview.netlify.app/Main?repo=dmy%2Felm-realworld-example-app#Model) when [logging in](https://elm-doc-preview.netlify.app/Effect?repo=dmy%2Felm-realworld-example-app#login), or the current page when an URL change is wanted by a subpage `update` function.
+* All the `update` functions keep a clean and concise [`Msg -> Model -> ( Model, Effect Msg )`](https://github.com/dmy/elm-realworld-example-app/blob/master/src/Page/Home.elm#L140) signature.
+* Because effects are just data, some parameters like the `Browser.Navigation.key` are needed only in the effects [`perform`](https://github.com/dmy/elm-realworld-example-app/blob/master/src/Effect.elm#L209) function, which frees the developer from passing them to functions all over the application.
+* A single `NoOp` or ([`Ignored String`](https://elm-doc-preview.netlify.app/Main?repo=dmy%2Felm-realworld-example-app#Msg)) can be used for the whole application.
 
-## Development Build
+# How to run
 
-[Install Elm](https://guide.elm-lang.org/install.html) (e.g. with `npm install --global elm`), then from the root project directory, run this:
-
+```bash
+npm install
+npm run build
+npm run watch
 ```
-$ elm make src/Main.elm --output elm.js
-```
-
-If you want to include the time-traveling debugger, add `--debug` like so:
-
-```
-$ elm make src/Main.elm --output elm.js --debug
-```
-
-To view the site in a browser, bring up `index.html` from any local HTTP server, for example [`http-server`](https://www.npmjs.com/package/http-server).
-
-## Production Build
-
-This is a two-step process. First we compile `elm.js` using `elm make` with `--optimize`, and then we Uglify the result.
-
-#### Step 1
-
-```
-$ elm make src/Main.elm --output elm.js --optimize
-```
-
-This [generates production-optimized JS](https://elm-lang.org/blog/small-assets-without-the-headache) that is ready to be minified further using Uglify.
-
-#### Step 2
-
-(Make sure you have [Uglify](http://lisperator.net/uglifyjs/) installed first, e.g. with `npm install --global uglify-js`)
-
-```
-$ uglifyjs elm.js --compress 'pure_funcs="F2,F3,F4,F5,F6,F7,F8,F9,A2,A3,A4,A5,A6,A7,A8,A9",pure_getters=true,keep_fargs=false,unsafe_comps=true,unsafe=true,passes=2' --output=elm.js && uglifyjs elm.js --mangle --output=elm.js
-```
-
-This one lengthy command (make sure to scroll horizontally to get all of it if you're copy/pasting!) runs `uglifyjs` twice - first with `--compress` and then again with `--mangle`.
-
-> It's necessary to run Uglify twice if you use the `pure_funcs` flag, because if you enable both `--compress` and `--mangle` at the same time, the `pure_funcs` argument will have no effect; Uglify will mangle the names first and then not recognize them when it encounters those functions later.

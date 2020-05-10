@@ -1,76 +1,125 @@
-module Session exposing (Session, changes, cred, fromViewer, navKey, viewer)
+module Session exposing
+    ( Session
+    , guest
+    , avatar, credentials, username
+    , decoder, store, onChange
+    )
+
+{-| The application session.
+
+@docs Session
+
+
+# Create
+
+@docs guest
+
+
+# Query
+
+@docs avatar, credentials, username
+
+
+# Persistence
+
+@docs decoder, store, onChange
+
+-}
 
 import Api exposing (Cred)
-import Avatar exposing (Avatar)
-import Browser.Navigation as Nav
+import Author.Avatar as Avatar exposing (Avatar)
+import Author.Username exposing (Username)
 import Json.Decode as Decode exposing (Decoder)
-import Json.Decode.Pipeline exposing (custom, required)
-import Json.Encode as Encode exposing (Value)
-import Profile exposing (Profile)
-import Time
-import Viewer exposing (Viewer)
 
 
 
 -- TYPES
 
 
+{-| -}
 type Session
-    = LoggedIn Nav.Key Viewer
-    | Guest Nav.Key
+    = Authenticated Avatar Cred
+    | Guest
+
+
+
+-- BUILD
+
+
+{-| Create an anonymous session.
+-}
+guest : Session
+guest =
+    Guest
 
 
 
 -- INFO
 
 
-viewer : Session -> Maybe Viewer
-viewer session =
+{-| Return the user avatar.
+-}
+avatar : Session -> Avatar
+avatar session =
     case session of
-        LoggedIn _ val ->
-            Just val
+        Authenticated av _ ->
+            av
 
-        Guest _ ->
+        Guest ->
+            Avatar.default
+
+
+{-| Return the session username if authenticated.
+-}
+username : Session -> Maybe Username
+username session =
+    case session of
+        Authenticated _ cred ->
+            Just (Api.username cred)
+
+        Guest ->
             Nothing
 
 
-cred : Session -> Maybe Cred
-cred session =
+{-| Return the session credentials if authenticated.
+-}
+credentials : Session -> Maybe Cred
+credentials session =
     case session of
-        LoggedIn _ val ->
-            Just (Viewer.cred val)
+        Authenticated _ cred ->
+            Just cred
 
-        Guest _ ->
+        Guest ->
             Nothing
 
 
-navKey : Session -> Nav.Key
-navKey session =
-    case session of
-        LoggedIn key _ ->
-            key
 
-        Guest key ->
-            key
+-- SERIALIZATION
 
 
-
--- CHANGES
-
-
-changes : (Session -> msg) -> Nav.Key -> Sub msg
-changes toMsg key =
-    Api.viewerChanges (\maybeViewer -> toMsg (fromViewer key maybeViewer)) Viewer.decoder
+{-| -}
+decoder : Decoder (Cred -> Session)
+decoder =
+    Decode.map Authenticated (Decode.field "image" Avatar.decoder)
 
 
-fromViewer : Nav.Key -> Maybe Viewer -> Session
-fromViewer key maybeViewer =
-    -- It's stored in localStorage as a JSON String;
-    -- first decode the Value as a String, then
-    -- decode that String as JSON.
-    case maybeViewer of
-        Just viewerVal ->
-            LoggedIn key viewerVal
 
-        Nothing ->
-            Guest key
+-- PERSISTENCE
+
+
+{-| Store the session into local storage.
+-}
+store : Session -> Cmd msg
+store session =
+    Api.storeSession
+        [ ( "image", Avatar.encode (avatar session) ) ]
+        (credentials session)
+
+
+{-| An event listener for [`Session`](Session#Session) changes.
+It will trigger for any change of the session stored into the local
+storage, even those from other browser tabs or windows.
+-}
+onChange : (Session -> msg) -> Sub msg
+onChange toMsg =
+    Api.onSessionChange (Maybe.withDefault Guest >> toMsg) decoder

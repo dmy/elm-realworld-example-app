@@ -1,213 +1,113 @@
-module Main exposing (main)
+module Main exposing
+    ( Model, Msg(..)
+    , init, view, update
+    , main
+    )
 
-import Api exposing (Cred)
-import Article.Slug exposing (Slug)
-import Avatar exposing (Avatar)
+{-|
+
+
+# The Elm architecture
+
+[The usual Elm Architecture](https://guide.elm-lang.org/architecture/) is used, except that `Effect msg` are returned instead of `Cmd msg`, thanks to [`Effect.application`](Effect#application).
+
+@docs Model, Msg
+
+@docs init, view, update
+
+
+# Main
+
+@docs main
+
+-}
+
 import Browser exposing (Document)
 import Browser.Navigation as Nav
-import Html exposing (..)
-import Json.Decode as Decode exposing (Value)
+import Effect exposing (Effect)
+import Env exposing (Env)
+import Json.Decode exposing (Value)
 import Page exposing (Page)
-import Page.Article as Article
-import Page.Article.Editor as Editor
-import Page.Blank as Blank
-import Page.Home as Home
-import Page.Login as Login
-import Page.NotFound as NotFound
-import Page.Profile as Profile
-import Page.Register as Register
-import Page.Settings as Settings
 import Route exposing (Route)
 import Session exposing (Session)
-import Task
 import Time
 import Url exposing (Url)
-import Username exposing (Username)
-import Viewer exposing (Viewer)
 
 
-
--- NOTE: Based on discussions around how asset management features
--- like code splitting and lazy loading have been shaping up, it's possible
--- that most of this file may become unnecessary in a future release of Elm.
--- Avoid putting things in this module unless there is no alternative!
--- See https://discourse.elm-lang.org/t/elm-spa-in-0-19/1800/2 for more.
-
-
-type Model
-    = Redirect Session
-    | NotFound Session
-    | Home Home.Model
-    | Settings Settings.Model
-    | Login Login.Model
-    | Register Register.Model
-    | Profile Username Profile.Model
-    | Article Article.Model
-    | Editor (Maybe Slug) Editor.Model
+{-| The application model, storing the current session (guest or authenticated),
+an environment and the current page.
+-}
+type alias Model =
+    { env : Env
+    , session : Session
+    , page : Page
+    }
 
 
 
 -- MODEL
 
 
-init : Maybe Viewer -> Url -> Nav.Key -> ( Model, Cmd Msg )
-init maybeViewer url navKey =
-    changeRouteTo (Route.fromUrl url)
-        (Redirect (Session.fromViewer navKey maybeViewer))
+{-| Initialize the application.
+-}
+init : Session -> Url -> Nav.Key -> ( Model, Effect Msg )
+init session url navKey =
+    let
+        ( model, effect ) =
+            changeRouteTo (Route.fromUrl url)
+                { env = Env.init navKey Time.utc
+                , session = session
+                , page = Page.blank
+                }
+    in
+    ( model
+    , Effect.batch [ effect, Effect.getTimeZone GotTimeZone ]
+    )
 
 
 
 -- VIEW
 
 
+{-| Turns the model into an HTML page.
+-}
 view : Model -> Document Msg
-view model =
-    let
-        viewer =
-            Session.viewer (toSession model)
-
-        viewPage page toMsg config =
-            let
-                { title, body } =
-                    Page.view viewer page config
-            in
-            { title = title
-            , body = List.map (Html.map toMsg) body
-            }
-    in
-    case model of
-        Redirect _ ->
-            Page.view viewer Page.Other Blank.view
-
-        NotFound _ ->
-            Page.view viewer Page.Other NotFound.view
-
-        Settings settings ->
-            viewPage Page.Other GotSettingsMsg (Settings.view settings)
-
-        Home home ->
-            viewPage Page.Home GotHomeMsg (Home.view home)
-
-        Login login ->
-            viewPage Page.Other GotLoginMsg (Login.view login)
-
-        Register register ->
-            viewPage Page.Other GotRegisterMsg (Register.view register)
-
-        Profile username profile ->
-            viewPage (Page.Profile username) GotProfileMsg (Profile.view profile)
-
-        Article article ->
-            viewPage Page.Other GotArticleMsg (Article.view article)
-
-        Editor Nothing editor ->
-            viewPage Page.NewArticle GotEditorMsg (Editor.view editor)
-
-        Editor (Just _) editor ->
-            viewPage Page.Other GotEditorMsg (Editor.view editor)
+view ({ env, session } as model) =
+    Page.view env session model.page
+        |> Page.mapDocument GotPageMsg
 
 
 
 -- UPDATE
 
 
+{-| The top level application `Msg` type.
+-}
 type Msg
-    = ChangedUrl Url
+    = Ignored String
+    | ChangedUrl Url
     | ClickedLink Browser.UrlRequest
-    | GotHomeMsg Home.Msg
-    | GotSettingsMsg Settings.Msg
-    | GotLoginMsg Login.Msg
-    | GotRegisterMsg Register.Msg
-    | GotProfileMsg Profile.Msg
-    | GotArticleMsg Article.Msg
-    | GotEditorMsg Editor.Msg
+    | GotTimeZone Time.Zone
     | GotSession Session
+    | GotPageMsg Page.Msg
 
 
-toSession : Model -> Session
-toSession page =
-    case page of
-        Redirect session ->
-            session
-
-        NotFound session ->
-            session
-
-        Home home ->
-            Home.toSession home
-
-        Settings settings ->
-            Settings.toSession settings
-
-        Login login ->
-            Login.toSession login
-
-        Register register ->
-            Register.toSession register
-
-        Profile _ profile ->
-            Profile.toSession profile
-
-        Article article ->
-            Article.toSession article
-
-        Editor _ editor ->
-            Editor.toSession editor
+changeRouteTo : Maybe Route -> Model -> ( Model, Effect Msg )
+changeRouteTo route model =
+    Page.changeRouteTo route model.session model.page
+        |> fromPage model
 
 
-changeRouteTo : Maybe Route -> Model -> ( Model, Cmd Msg )
-changeRouteTo maybeRoute model =
-    let
-        session =
-            toSession model
-    in
-    case maybeRoute of
-        Nothing ->
-            ( NotFound session, Cmd.none )
-
-        Just Route.Root ->
-            ( model, Route.replaceUrl (Session.navKey session) Route.Home )
-
-        Just Route.Logout ->
-            ( model, Api.logout )
-
-        Just Route.NewArticle ->
-            Editor.initNew session
-                |> updateWith (Editor Nothing) GotEditorMsg model
-
-        Just (Route.EditArticle slug) ->
-            Editor.initEdit session slug
-                |> updateWith (Editor (Just slug)) GotEditorMsg model
-
-        Just Route.Settings ->
-            Settings.init session
-                |> updateWith Settings GotSettingsMsg model
-
-        Just Route.Home ->
-            Home.init session
-                |> updateWith Home GotHomeMsg model
-
-        Just Route.Login ->
-            Login.init session
-                |> updateWith Login GotLoginMsg model
-
-        Just Route.Register ->
-            Register.init session
-                |> updateWith Register GotRegisterMsg model
-
-        Just (Route.Profile username) ->
-            Profile.init session username
-                |> updateWith (Profile username) GotProfileMsg model
-
-        Just (Route.Article slug) ->
-            Article.init session slug
-                |> updateWith Article GotArticleMsg model
-
-
-update : Msg -> Model -> ( Model, Cmd Msg )
+{-| Turns messages into effects and model update.
+-}
+update : Msg -> Model -> ( Model, Effect Msg )
 update msg model =
-    case ( msg, model ) of
-        ( ClickedLink urlRequest, _ ) ->
+    case msg of
+        -- This allows to see tagged ignored events in the debugger
+        Ignored _ ->
+            ( model, Effect.none )
+
+        ClickedLink urlRequest ->
             case urlRequest of
                 Browser.Internal url ->
                     case url.fragment of
@@ -220,63 +120,36 @@ update msg model =
                             -- fragment-based routing, this entire
                             -- `case url.fragment of` expression this comment
                             -- is inside would be unnecessary.
-                            ( model, Cmd.none )
+                            ( model, Effect.none )
 
                         Just _ ->
-                            ( model
-                            , Nav.pushUrl (Session.navKey (toSession model)) (Url.toString url)
-                            )
+                            ( model, Effect.pushUrl url )
 
                 Browser.External href ->
                     ( model
-                    , Nav.load href
+                    , Effect.loadUrl href
                     )
 
-        ( ChangedUrl url, _ ) ->
+        ChangedUrl url ->
             changeRouteTo (Route.fromUrl url) model
 
-        ( GotSettingsMsg subMsg, Settings settings ) ->
-            Settings.update subMsg settings
-                |> updateWith Settings GotSettingsMsg model
-
-        ( GotLoginMsg subMsg, Login login ) ->
-            Login.update subMsg login
-                |> updateWith Login GotLoginMsg model
-
-        ( GotRegisterMsg subMsg, Register register ) ->
-            Register.update subMsg register
-                |> updateWith Register GotRegisterMsg model
-
-        ( GotHomeMsg subMsg, Home home ) ->
-            Home.update subMsg home
-                |> updateWith Home GotHomeMsg model
-
-        ( GotProfileMsg subMsg, Profile username profile ) ->
-            Profile.update subMsg profile
-                |> updateWith (Profile username) GotProfileMsg model
-
-        ( GotArticleMsg subMsg, Article article ) ->
-            Article.update subMsg article
-                |> updateWith Article GotArticleMsg model
-
-        ( GotEditorMsg subMsg, Editor slug editor ) ->
-            Editor.update subMsg editor
-                |> updateWith (Editor slug) GotEditorMsg model
-
-        ( GotSession session, Redirect _ ) ->
-            ( Redirect session
-            , Route.replaceUrl (Session.navKey session) Route.Home
+        GotTimeZone timeZone ->
+            ( { model | env = Env.updateTimeZone timeZone model.env }
+            , Effect.none
             )
 
-        ( _, _ ) ->
-            -- Disregard messages that arrived for the wrong page.
-            ( model, Cmd.none )
+        GotSession session ->
+            ( { model | session = session }, Effect.replaceUrl Route.Home )
+
+        GotPageMsg pageMsg ->
+            Page.update pageMsg model.page
+                |> fromPage model
 
 
-updateWith : (subModel -> Model) -> (subMsg -> Msg) -> Model -> ( subModel, Cmd subMsg ) -> ( Model, Cmd Msg )
-updateWith toModel toMsg model ( subModel, subCmd ) =
-    ( toModel subModel
-    , Cmd.map toMsg subCmd
+fromPage : Model -> ( Page, Effect Page.Msg ) -> ( Model, Effect Msg )
+fromPage model ( page, effect ) =
+    ( { model | page = page }
+    , Effect.map GotPageMsg effect
     )
 
 
@@ -285,47 +158,25 @@ updateWith toModel toMsg model ( subModel, subCmd ) =
 
 
 subscriptions : Model -> Sub Msg
-subscriptions model =
-    case model of
-        NotFound _ ->
-            Sub.none
-
-        Redirect _ ->
-            Session.changes GotSession (Session.navKey (toSession model))
-
-        Settings settings ->
-            Sub.map GotSettingsMsg (Settings.subscriptions settings)
-
-        Home home ->
-            Sub.map GotHomeMsg (Home.subscriptions home)
-
-        Login login ->
-            Sub.map GotLoginMsg (Login.subscriptions login)
-
-        Register register ->
-            Sub.map GotRegisterMsg (Register.subscriptions register)
-
-        Profile _ profile ->
-            Sub.map GotProfileMsg (Profile.subscriptions profile)
-
-        Article article ->
-            Sub.map GotArticleMsg (Article.subscriptions article)
-
-        Editor _ editor ->
-            Sub.map GotEditorMsg (Editor.subscriptions editor)
+subscriptions _ =
+    Session.onChange GotSession
 
 
 
 -- MAIN
 
 
+{-| The application entry point. It will receive the session from local storage
+as a flag if present.
+-}
 main : Program Value Model Msg
 main =
-    Api.application Viewer.decoder
+    Effect.application
         { init = init
+        , view = view
+        , update = update
+        , ignore = Ignored
         , onUrlChange = ChangedUrl
         , onUrlRequest = ClickedLink
         , subscriptions = subscriptions
-        , update = update
-        , view = view
         }

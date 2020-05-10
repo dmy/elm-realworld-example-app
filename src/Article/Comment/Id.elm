@@ -1,4 +1,4 @@
-module CommentId exposing (CommentId, decoder, toString)
+module Article.Comment.Id exposing (CommentId, decoder, toString)
 
 import Json.Decode as Decode exposing (Decoder)
 

@@ -1,4 +1,12 @@
-module Author exposing (Author(..), FollowedAuthor, UnfollowedAuthor, decoder, fetch, follow, followButton, profile, requestFollow, requestUnfollow, unfollow, unfollowButton, username, view)
+module Author exposing
+    ( Author(..), FollowedAuthor, UnfollowedAuthor
+    , fetch, decoder
+    , bio, avatarSrc
+    , follow, unfollow
+    , Settings, fetchUserSettings
+    , register, authenticate, edit
+    , name
+    )
 
 {-| The author of an Article. It includes a Profile.
 
@@ -13,13 +21,13 @@ To do this, I defined `Author` a custom type with three variants, one for each
 of those possibilities.
 
 I also made separate types for FollowedAuthor and UnfollowedAuthor.
-They are custom type wrappers around Profile, and thier sole purpose is to
+They are custom type wrappers around Profile, and their sole purpose is to
 help me keep track of which operations are supported.
 
 For example, consider these functions:
 
-requestFollow : UnfollowedAuthor -> Cred -> Http.Request Author
-requestUnfollow : FollowedAuthor -> Cred -> Http.Request Author
+follow : UnfollowedAuthor -> Cred -> Api.Request Author
+unfollow : FollowedAuthor -> Cred -> Api.Request Author
 
 These types help the compiler prevent several mistakes:
 
@@ -29,21 +37,24 @@ These types help the compiler prevent several mistakes:
 
 There are still ways we could mess things up (e.g. make a button that calls Author.unfollow when you click it, but which displays "Follow" to the user) - but this rules out a bunch of potential problems.
 
+@docs Author, FollowedAuthor, UnfollowedAuthor
+@docs fetch, decoder
+@docs bio, avatarSrc
+@docs follow, unfollow
+@docs Settings, fetchUserSettings
+@docs register, authenticate, edit
+
 -}
 
 import Api exposing (Cred)
 import Api.Endpoint as Endpoint
-import Html exposing (Html, a, i, text)
-import Html.Attributes exposing (attribute, class, href, id, placeholder)
-import Html.Events exposing (onClick)
+import Author.Avatar as Avatar exposing (Avatar)
+import Author.Username as Username exposing (Username)
+import Html
 import Http
 import Json.Decode as Decode exposing (Decoder)
-import Json.Decode.Pipeline exposing (custom, optional, required)
-import Json.Encode as Encode exposing (Value)
-import Profile exposing (Profile)
-import Route exposing (Route)
-import Username exposing (Username)
-import Viewer exposing (Viewer)
+import Json.Encode as Encode
+import Session exposing (Session)
 
 
 {-| An author - either the current user, another user we're following, or
@@ -55,36 +66,47 @@ users we _are_ following, and we can't perform either for ourselves.
 
 -}
 type Author
-    = IsFollowing FollowedAuthor
-    | IsNotFollowing UnfollowedAuthor
-    | IsViewer Cred Profile
+    = Authenticated AuthenticatedAuthor
+    | Followed FollowedAuthor
+    | Unfollowed UnfollowedAuthor
+
+
+{-| Ther logged-in user.
+-}
+type AuthenticatedAuthor
+    = AuthenticatedAuthor Profile
 
 
 {-| An author we're following.
 -}
 type FollowedAuthor
-    = FollowedAuthor Username Profile
+    = FollowedAuthor Profile
 
 
 {-| An author we're not following.
 -}
 type UnfollowedAuthor
-    = UnfollowedAuthor Username Profile
+    = UnfollowedAuthor Profile
 
 
-{-| Return an Author's username.
+{-| An author profile.
 -}
-username : Author -> Username
-username author =
-    case author of
-        IsViewer cred _ ->
-            Api.username cred
+type alias Profile =
+    { username : Username
+    , bio : Maybe String
+    , avatar : Avatar
+    }
 
-        IsFollowing (FollowedAuthor val _) ->
-            val
 
-        IsNotFollowing (UnfollowedAuthor val _) ->
-            val
+{-| The logged user settings.
+-}
+type alias Settings =
+    { email : String
+    , name : String
+    , bio : String
+    , avatar : String
+    , password : String
+    }
 
 
 {-| Return an Author's profile.
@@ -92,95 +114,104 @@ username author =
 profile : Author -> Profile
 profile author =
     case author of
-        IsViewer _ val ->
-            val
+        Authenticated (AuthenticatedAuthor prof) -> prof
+        Followed (FollowedAuthor prof) -> prof
+        Unfollowed (UnfollowedAuthor prof) -> prof
 
-        IsFollowing (FollowedAuthor _ val) ->
-            val
 
-        IsNotFollowing (UnfollowedAuthor _ val) ->
-            val
+name : Author -> Username
+name =
+    profile >> .username
+
+
+bio : Author -> String
+bio =
+    profile >> .bio >> Maybe.withDefault ""
+
+
+avatarSrc : Author -> Html.Attribute msg
+avatarSrc =
+    profile >> .avatar >> Avatar.src
 
 
 
 -- FETCH
 
 
-fetch : Username -> Maybe Cred -> Http.Request Author
-fetch uname maybeCred =
-    Decode.field "profile" (decoder maybeCred)
-        |> Api.get (Endpoint.profiles uname) maybeCred
+fetch : Username -> Maybe Cred -> Api.Request Author
+fetch username maybeCred =
+    Api.get (Endpoint.profiles username) maybeCred <|
+        Decode.field "profile" (decoder maybeCred)
+
+
+fetchUserSettings : Cred -> Api.Request Settings
+fetchUserSettings cred =
+    Api.get Endpoint.user (Just cred) (Decode.field "user" userSettingsDecoder)
 
 
 
 -- FOLLOWING
 
 
-follow : UnfollowedAuthor -> FollowedAuthor
-follow (UnfollowedAuthor uname prof) =
-    FollowedAuthor uname prof
-
-
-unfollow : FollowedAuthor -> UnfollowedAuthor
-unfollow (FollowedAuthor uname prof) =
-    UnfollowedAuthor uname prof
-
-
-requestFollow : UnfollowedAuthor -> Cred -> Http.Request Author
-requestFollow (UnfollowedAuthor uname _) cred =
-    Api.post (Endpoint.follow uname) (Just cred) Http.emptyBody (followDecoder cred)
-
-
-requestUnfollow : FollowedAuthor -> Cred -> Http.Request Author
-requestUnfollow (FollowedAuthor uname _) cred =
-    Api.delete (Endpoint.follow uname)
-        cred
+follow : UnfollowedAuthor -> Cred -> Api.Request Author
+follow author cred =
+    Api.post (Endpoint.follow <| name <| Unfollowed author)
+        (Just cred)
         Http.emptyBody
-        (followDecoder cred)
+        (Decode.field "profile" <| decoder <| Just cred)
 
 
-followDecoder : Cred -> Decoder Author
-followDecoder cred =
-    Decode.field "profile" (decoder (Just cred))
+unfollow : FollowedAuthor -> Cred -> Api.Request Author
+unfollow author cred =
+    Api.delete (Endpoint.follow <| name <| Followed author) cred <|
+        (Decode.field "profile" <| decoder <| Just cred)
 
 
-followButton :
-    (Cred -> UnfollowedAuthor -> msg)
-    -> Cred
-    -> UnfollowedAuthor
-    -> Html msg
-followButton toMsg cred ((UnfollowedAuthor uname _) as author) =
-    toggleFollowButton "Follow"
-        [ "btn-outline-secondary" ]
-        (toMsg cred author)
-        uname
+
+-- REQUESTS
 
 
-unfollowButton :
-    (Cred -> FollowedAuthor -> msg)
-    -> Cred
-    -> FollowedAuthor
-    -> Html msg
-unfollowButton toMsg cred ((FollowedAuthor uname _) as author) =
-    toggleFollowButton "Unfollow"
-        [ "btn-secondary" ]
-        (toMsg cred author)
-        uname
-
-
-toggleFollowButton : String -> List String -> msg -> Username -> Html msg
-toggleFollowButton txt extraClasses msgWhenClicked uname =
+register : { username : String, email : String, password : String } -> Api.Request Session
+register user =
     let
-        classStr =
-            "btn btn-sm " ++ String.join " " extraClasses ++ " action-btn"
+        userObject =
+            Encode.object
+                [ ( "username", Encode.string <| String.trim user.username )
+                , ( "email", Encode.string <| String.trim user.email )
+                , ( "password", Encode.string user.password )
+                ]
 
-        caption =
-            "\u{00A0}" ++ txt ++ " " ++ Username.toString uname
+        body =
+            Encode.object [ ( "user", userObject ) ]
+                |> Http.jsonBody
     in
-    Html.button [ class classStr, onClick msgWhenClicked ]
-        [ i [ class "ion-plus-round" ] []
-        , text caption
-        ]
+    Api.register body Session.decoder
+
+
+authenticate : { email : String, password : String } -> Api.Request Session
+authenticate { email, password } =
+    let
+        user =
+            Encode.object
+                [ ( "email", Encode.string <| String.trim email )
+                , ( "password", Encode.string password )
+                ]
+
+        body =
+            Encode.object [ ( "user", user ) ]
+                |> Http.jsonBody
+    in
+    Api.login body Session.decoder
+
+
+edit : Cred -> Settings -> Api.Request Session
+edit cred settings =
+    let
+        body =
+            Encode.object [ ( "user", encodeSettings settings ) ]
+                |> Http.jsonBody
+    in
+    Api.settings cred body Session.decoder
 
 
 
@@ -189,46 +220,65 @@ toggleFollowButton txt extraClasses msgWhenClicked uname =
 
 decoder : Maybe Cred -> Decoder Author
 decoder maybeCred =
-    Decode.succeed Tuple.pair
-        |> custom Profile.decoder
-        |> required "username" Username.decoder
-        |> Decode.andThen (decodeFromPair maybeCred)
+    Decode.map2 (toAuthor maybeCred)
+        profileDecoder
+        (Decode.field "following" Decode.bool)
 
 
-decodeFromPair : Maybe Cred -> ( Profile, Username ) -> Decoder Author
-decodeFromPair maybeCred ( prof, uname ) =
+profileDecoder : Decoder Profile
+profileDecoder =
+    Decode.map3 Profile
+        (Decode.field "username" Username.decoder)
+        (Decode.field "bio" <| Decode.nullable Decode.string)
+        (Decode.field "image" <| Avatar.decoder)
+
+
+toAuthor : Maybe Cred -> Profile -> Bool -> Author
+toAuthor maybeCred prof followed =
     case maybeCred of
         Nothing ->
             -- If you're logged out, you can't be following anyone!
-            Decode.succeed (IsNotFollowing (UnfollowedAuthor uname prof))
+            Unfollowed (UnfollowedAuthor prof)
 
         Just cred ->
-            if uname == Api.username cred then
-                Decode.succeed (IsViewer cred prof)
+            if prof.username == Api.username cred then
+                Authenticated (AuthenticatedAuthor prof)
+
+            else if followed then
+                Followed (FollowedAuthor prof)
 
             else
-                nonViewerDecoder prof uname
+                Unfollowed (UnfollowedAuthor prof)
 
 
-nonViewerDecoder : Profile -> Username -> Decoder Author
-nonViewerDecoder prof uname =
-    Decode.succeed (authorFromFollowing prof uname)
-        |> optional "following" Decode.bool False
+userSettingsDecoder : Decoder Settings
+userSettingsDecoder =
+    Decode.map5 Settings
+        (Decode.field "email" Decode.string)
+        (Decode.field "username" Decode.string)
+        (Decode.field "bio" <| Decode.map (Maybe.withDefault "") (Decode.nullable Decode.string))
+        (Decode.field "image" <| Decode.map (Maybe.withDefault "") (Decode.nullable Decode.string))
+        (Decode.succeed "")
 
 
-authorFromFollowing : Profile -> Username -> Bool -> Author
-authorFromFollowing prof uname isFollowing =
-    if isFollowing then
-        IsFollowing (FollowedAuthor uname prof)
+encodeSettings : Settings -> Encode.Value
+encodeSettings settings =
+    let
+        updates =
+            [ ( "email", Encode.string <| String.trim settings.email )
+            , ( "username", Encode.string <| String.trim settings.name )
+            , ( "bio", nullableString settings.bio )
+            , ( "image", nullableString settings.avatar )
+            ]
 
-    else
-        IsNotFollowing (UnfollowedAuthor uname prof)
+        nullableString str =
+            case String.trim str of
+                "" -> Encode.null
+                trimmed -> Encode.string trimmed
+    in
+    Encode.object <|
+        if String.isEmpty settings.password then
+            updates
 
-
-{-| View an author. We basically render their username and a link to their
-profile, and that's it.
--}
-view : Username -> Html msg
-view uname =
-    a [ class "author", Route.href (Route.Profile uname) ]
-        [ Username.toHtml uname ]
+        else
+            ( "password", Encode.string settings.password ) :: updates

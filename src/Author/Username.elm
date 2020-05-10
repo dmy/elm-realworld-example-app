@@ -1,6 +1,5 @@
-module Username exposing (Username, decoder, encode, toHtml, toString, urlParser)
+module Author.Username exposing (Username, decoder, encode, toString, urlParser)
 
-import Html exposing (Html)
 import Json.Decode as Decode exposing (Decoder)
 import Json.Encode as Encode exposing (Value)
 import Url.Parser
@@ -23,25 +22,20 @@ decoder =
     Decode.map Username Decode.string
 
 
-
--- TRANSFORM
-
-
 encode : Username -> Value
 encode (Username username) =
     Encode.string username
 
 
+
+-- TRANSFORM
+
+
 toString : Username -> String
-toString (Username username) =
-    username
+toString (Username name) =
+    name
 
 
 urlParser : Url.Parser.Parser (Username -> a) a
 urlParser =
     Url.Parser.custom "USERNAME" (\str -> Just (Username str))
-
-
-toHtml : Username -> Html msg
-toHtml (Username username) =
-    Html.text username

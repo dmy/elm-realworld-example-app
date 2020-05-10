@@ -2,16 +2,13 @@ module Article.Comment exposing (Comment, author, body, createdAt, delete, id, l
 
 import Api exposing (Cred)
 import Api.Endpoint as Endpoint
-import Article exposing (Article)
-import Article.Slug as Slug exposing (Slug)
+import Article.Comment.Id exposing (CommentId)
+import Article.Slug exposing (Slug)
 import Author exposing (Author)
-import CommentId exposing (CommentId)
 import Http
 import Iso8601
 import Json.Decode as Decode exposing (Decoder)
-import Json.Decode.Pipeline exposing (custom, required)
 import Json.Encode as Encode exposing (Value)
-import Profile exposing (Profile)
 import Time
 
 
@@ -59,8 +56,8 @@ author (Comment comment) =
 -- LIST
 
 
-list : Maybe Cred -> Slug -> Http.Request (List Comment)
-list maybeCred articleSlug =
+list : Slug -> Maybe Cred -> Api.Request (List Comment)
+list articleSlug maybeCred =
     Decode.field "comments" (Decode.list (decoder maybeCred))
         |> Api.get (Endpoint.comments articleSlug) maybeCred
 
@@ -69,7 +66,7 @@ list maybeCred articleSlug =
 -- POST
 
 
-post : Slug -> String -> Cred -> Http.Request Comment
+post : Slug -> String -> Cred -> Api.Request Comment
 post articleSlug commentBody cred =
     let
         bod =
@@ -89,9 +86,9 @@ encodeCommentBody str =
 -- DELETE
 
 
-delete : Slug -> CommentId -> Cred -> Http.Request ()
+delete : Slug -> CommentId -> Cred -> Api.Request ()
 delete articleSlug commentId cred =
-    Api.delete (Endpoint.comment articleSlug commentId) cred Http.emptyBody (Decode.succeed ())
+    Api.delete (Endpoint.comment articleSlug commentId) cred (Decode.succeed ())
 
 
 
@@ -100,9 +97,9 @@ delete articleSlug commentId cred =
 
 decoder : Maybe Cred -> Decoder Comment
 decoder maybeCred =
-    Decode.succeed Internals
-        |> required "id" CommentId.decoder
-        |> required "body" Decode.string
-        |> required "createdAt" Iso8601.decoder
-        |> required "author" (Author.decoder maybeCred)
+    Decode.map4 Internals
+        (Decode.field "id" Article.Comment.Id.decoder)
+        (Decode.field "body" Decode.string)
+        (Decode.field "createdAt" Iso8601.decoder)
+        (Decode.field "author" (Author.decoder maybeCred))
         |> Decode.map Comment

@@ -2,12 +2,13 @@ module RoutingTests exposing (..)
 
 import Article
 import Article.Slug as Slug exposing (Slug)
+import Author.Username as Username exposing (Username)
 import Expect exposing (Expectation)
 import Json.Decode as Decode exposing (decodeString)
 import Route exposing (Route(..))
 import Test exposing (..)
 import Url exposing (Url)
-import Username exposing (Username)
+
 
 
 -- TODO need to add lots more tests!
@@ -63,8 +64,8 @@ fragment frag =
 usernameFromStr : String -> Username
 usernameFromStr str =
     case decodeString Username.decoder ("\"" ++ str ++ "\"") of
-        Ok username ->
-            username
+        Ok name ->
+            name
 
         Err err ->
             Debug.todo ("Error decoding Username from \"" ++ str ++ "\": " ++ Decode.errorToString err)

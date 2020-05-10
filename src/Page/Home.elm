@@ -1,50 +1,34 @@
-module Page.Home exposing (Model, Msg, init, subscriptions, toSession, update, view)
+module Page.Home exposing (Model, Msg, init, view, update)
 
 {-| The homepage. You can get here via either the / or /#/ routes.
+
+@docs Model, Msg, init, view, update
+
 -}
 
 import Api exposing (Cred)
-import Api.Endpoint as Endpoint
-import Article exposing (Article, Preview)
 import Article.Feed as Feed
 import Article.Tag as Tag exposing (Tag)
-import Browser.Dom as Dom
-import Html exposing (..)
-import Html.Attributes exposing (attribute, class, classList, href, id, placeholder)
-import Html.Events exposing (onClick)
-import Http
-import Loading
-import Log
-import Page
-import PaginatedList exposing (PaginatedList)
+import Effect exposing (Effect)
+import Errors exposing (Errors)
+import Html exposing (Html)
+import Remote exposing (Remote)
 import Session exposing (Session)
-import Task exposing (Task)
 import Time
-import Url.Builder
-import Username exposing (Username)
+import View
 
 
 
 -- MODEL
 
 
+{-| -}
 type alias Model =
-    { session : Session
-    , timeZone : Time.Zone
-    , feedTab : FeedTab
+    { feedTab : FeedTab
     , feedPage : Int
-
-    -- Loaded independently from server
-    , tags : Status (List Tag)
-    , feed : Status Feed.Model
+    , tags : Remote (List Tag)
+    , feed : Remote Feed.Model
     }
-
-
-type Status a
-    = Loading
-    | LoadingSlowly
-    | Loaded a
-    | Failed
 
 
 type FeedTab
@@ -53,34 +37,26 @@ type FeedTab
     | TagFeed Tag
 
 
-init : Session -> ( Model, Cmd Msg )
+{-| -}
+init : Session -> ( Model, Effect Msg )
 init session =
     let
         feedTab =
-            case Session.cred session of
+            case Session.credentials session of
                 Just cred ->
                     YourFeed cred
 
                 Nothing ->
                     GlobalFeed
-
-        loadTags =
-            Http.toTask Tag.list
     in
-    ( { session = session
-      , timeZone = Time.utc
-      , feedTab = feedTab
+    ( { feedTab = feedTab
       , feedPage = 1
-      , tags = Loading
-      , feed = Loading
+      , tags = Remote.loading "tags"
+      , feed = Remote.loading "feed"
       }
-    , Cmd.batch
-        [ fetchFeed session feedTab 1
-            |> Task.attempt CompletedFeedLoad
-        , Tag.list
-            |> Http.send CompletedTagsLoad
-        , Task.perform GotTimeZone Time.here
-        , Task.perform (\_ -> PassedSlowLoadThreshold) Loading.slowThreshold
+    , Effect.batch
+        [ fetchFeed feedTab 1
+        , Effect.fetchTags CompletedTagsLoad
         ]
     )
 
@@ -89,68 +65,31 @@ init session =
 -- VIEW
 
 
-view : Model -> { title : String, content : Html Msg }
-view model =
+{-| -}
+view : Time.Zone -> Session -> Model -> { title : String, content : Html Msg }
+view timeZone session model =
     { title = "Conduit"
-    , content =
-        div [ class "home-page" ]
-            [ viewBanner
-            , div [ class "container page" ]
-                [ div [ class "row" ]
-                    [ div [ class "col-md-9" ] <|
-                        case model.feed of
-                            Loaded feed ->
-                                [ div [ class "feed-toggle" ] <|
-                                    List.concat
-                                        [ [ viewTabs
-                                                (Session.cred model.session)
-                                                model.feedTab
-                                          ]
-                                        , Feed.viewArticles model.timeZone feed
-                                            |> List.map (Html.map GotFeedMsg)
-                                        , [ Feed.viewPagination ClickedFeedPage model.feedPage feed ]
-                                        ]
-                                ]
-
-                            Loading ->
-                                []
-
-                            LoadingSlowly ->
-                                [ Loading.icon ]
-
-                            Failed ->
-                                [ Loading.error "feed" ]
-                    , div [ class "col-md-3" ] <|
-                        case model.tags of
-                            Loaded tags ->
-                                [ div [ class "sidebar" ] <|
-                                    [ p [] [ text "Popular Tags" ]
-                                    , viewTags tags
-                                    ]
-                                ]
-
-                            Loading ->
-                                []
-
-                            LoadingSlowly ->
-                                [ Loading.icon ]
-
-                            Failed ->
-                                [ Loading.error "tags" ]
-                    ]
-                ]
-            ]
+    , content = View.home (viewFeed timeZone session model) (viewTags model.tags)
     }
 
 
-viewBanner : Html msg
-viewBanner =
-    div [ class "banner" ]
-        [ div [ class "container" ]
-            [ h1 [ class "logo-font" ] [ text "conduit" ]
-            , p [] [ text "A place to share your knowledge." ]
-            ]
-        ]
+viewFeed : Time.Zone -> Session -> Model -> List (Html Msg)
+viewFeed timeZone session model =
+    Remote.viewList
+        (\feed ->
+            List.concat
+                [ [ viewTabs (Session.credentials session) model.feedTab ]
+                , Feed.viewArticles timeZone session feed
+                    |> List.map (Html.map GotFeedMsg)
+                , [ Feed.viewPagination ClickedFeedPage model.feedPage feed ]
+                ]
+        )
+        model.feed
+
+
+viewTags : Remote (List Tag) -> Html Msg
+viewTags tags =
+    Remote.view (View.tags << List.map (View.tag ClickedTag)) tags
 
 
 
@@ -159,33 +98,21 @@ viewBanner =
 
 viewTabs : Maybe Cred -> FeedTab -> Html Msg
 viewTabs maybeCred tab =
-    case tab of
-        YourFeed cred ->
-            Feed.viewTabs [] (yourFeed cred) [ globalFeed ]
+    case ( tab, maybeCred ) of
+        ( YourFeed cred, _ ) ->
+            View.tabs [] (yourFeed cred) [ globalFeed ]
 
-        GlobalFeed ->
-            let
-                otherTabs =
-                    case maybeCred of
-                        Just cred ->
-                            [ yourFeed cred ]
+        ( GlobalFeed, Just cred ) ->
+            View.tabs [ yourFeed cred ] globalFeed []
 
-                        Nothing ->
-                            []
-            in
-            Feed.viewTabs otherTabs globalFeed []
+        ( GlobalFeed, Nothing ) ->
+            View.tabs [] globalFeed []
 
-        TagFeed tag ->
-            let
-                otherTabs =
-                    case maybeCred of
-                        Just cred ->
-                            [ yourFeed cred, globalFeed ]
+        ( TagFeed tag, Just cred ) ->
+            View.tabs [ yourFeed cred, globalFeed ] (tagFeed tag) []
 
-                        Nothing ->
-                            [ globalFeed ]
-            in
-            Feed.viewTabs otherTabs (tagFeed tag) []
+        ( TagFeed tag, Nothing ) ->
+            View.tabs [ globalFeed ] (tagFeed tag) []
 
 
 yourFeed : Cred -> ( String, Msg )
@@ -204,43 +131,21 @@ tagFeed tag =
 
 
 
--- TAGS
-
-
-viewTags : List Tag -> Html Msg
-viewTags tags =
-    div [ class "tag-list" ] (List.map viewTag tags)
-
-
-viewTag : Tag -> Html Msg
-viewTag tagName =
-    a
-        [ class "tag-pill tag-default"
-        , onClick (ClickedTag tagName)
-
-        -- The RealWorld CSS requires an href to work properly.
-        , href ""
-        ]
-        [ text (Tag.toString tagName) ]
-
-
-
 -- UPDATE
 
 
+{-| -}
 type Msg
     = ClickedTag Tag
     | ClickedTab FeedTab
     | ClickedFeedPage Int
-    | CompletedFeedLoad (Result Http.Error Feed.Model)
-    | CompletedTagsLoad (Result Http.Error (List Tag))
-    | GotTimeZone Time.Zone
+    | CompletedFeedLoad (Result Errors Feed.Model)
+    | CompletedTagsLoad (Result Errors (List Tag))
     | GotFeedMsg Feed.Msg
-    | GotSession Session
-    | PassedSlowLoadThreshold
 
 
-update : Msg -> Model -> ( Model, Cmd Msg )
+{-| -}
+update : Msg -> Model -> ( Model, Effect Msg )
 update msg model =
     case msg of
         ClickedTag tag ->
@@ -249,147 +154,65 @@ update msg model =
                     TagFeed tag
             in
             ( { model | feedTab = feedTab }
-            , fetchFeed model.session feedTab 1
-                |> Task.attempt CompletedFeedLoad
+            , fetchFeed feedTab 1
             )
 
         ClickedTab tab ->
             ( { model | feedTab = tab }
-            , fetchFeed model.session tab 1
-                |> Task.attempt CompletedFeedLoad
+            , fetchFeed tab 1
             )
 
         ClickedFeedPage page ->
             ( { model | feedPage = page }
-            , fetchFeed model.session model.feedTab page
-                |> Task.andThen (\feed -> Task.map (\_ -> feed) scrollToTop)
-                |> Task.attempt CompletedFeedLoad
+            , fetchFeed model.feedTab page
             )
 
         CompletedFeedLoad (Ok feed) ->
-            ( { model | feed = Loaded feed }, Cmd.none )
+            ( { model | feed = Remote.loaded feed model.feed }
+            , Effect.scrollToTop
+            )
 
-        CompletedFeedLoad (Err error) ->
-            ( { model | feed = Failed }, Cmd.none )
+        CompletedFeedLoad (Err _) ->
+            ( { model | feed = Remote.failed model.feed }
+            , Effect.logError
+            )
 
         CompletedTagsLoad (Ok tags) ->
-            ( { model | tags = Loaded tags }, Cmd.none )
+            ( { model | tags = Remote.loaded tags model.tags }
+            , Effect.none
+            )
 
-        CompletedTagsLoad (Err error) ->
-            ( { model | tags = Failed }
-            , Log.error
+        CompletedTagsLoad (Err _) ->
+            ( { model | tags = Remote.failed model.tags }
+            , Effect.logError
             )
 
         GotFeedMsg subMsg ->
-            case model.feed of
-                Loaded feed ->
+            case Remote.get model.feed of
+                Just feed ->
                     let
-                        ( newFeed, subCmd ) =
-                            Feed.update (Session.cred model.session) subMsg feed
+                        ( newFeed, effect ) =
+                            Feed.update subMsg feed
                     in
-                    ( { model | feed = Loaded newFeed }
-                    , Cmd.map GotFeedMsg subCmd
+                    ( { model | feed = Remote.loaded newFeed model.feed }
+                    , Effect.map GotFeedMsg effect
                     )
 
-                Loading ->
-                    ( model, Log.error )
-
-                LoadingSlowly ->
-                    ( model, Log.error )
-
-                Failed ->
-                    ( model, Log.error )
-
-        GotTimeZone tz ->
-            ( { model | timeZone = tz }, Cmd.none )
-
-        GotSession session ->
-            ( { model | session = session }, Cmd.none )
-
-        PassedSlowLoadThreshold ->
-            let
-                -- If any data is still Loading, change it to LoadingSlowly
-                -- so `view` knows to render a spinner.
-                feed =
-                    case model.feed of
-                        Loading ->
-                            LoadingSlowly
-
-                        other ->
-                            other
-
-                tags =
-                    case model.tags of
-                        Loading ->
-                            LoadingSlowly
-
-                        other ->
-                            other
-            in
-            ( { model | feed = feed, tags = tags }, Cmd.none )
+                Nothing ->
+                    ( model, Effect.logError )
 
 
 
--- HTTP
+-- FETCH FEED EFFECT
 
 
-fetchFeed : Session -> FeedTab -> Int -> Task Http.Error Feed.Model
-fetchFeed session feedTabs page =
+fetchFeed : FeedTab -> Int -> Effect Msg
+fetchFeed feedTabs page =
     let
-        maybeCred =
-            Session.cred session
-
-        decoder =
-            Feed.decoder maybeCred articlesPerPage
-
-        params =
-            PaginatedList.params { page = page, resultsPerPage = articlesPerPage }
-
-        request =
-            case feedTabs of
-                YourFeed cred ->
-                    Api.get (Endpoint.feed params) maybeCred decoder
-
-                GlobalFeed ->
-                    Api.get (Endpoint.articles params) maybeCred decoder
-
-                TagFeed tag ->
-                    let
-                        firstParam =
-                            Url.Builder.string "tag" (Tag.toString tag)
-                    in
-                    Api.get (Endpoint.articles (firstParam :: params)) maybeCred decoder
+        toFeedMsg =
+            Result.map Feed.init >> CompletedFeedLoad
     in
-    Http.toTask request
-        |> Task.map (Feed.init session)
-
-
-articlesPerPage : Int
-articlesPerPage =
-    10
-
-
-scrollToTop : Task x ()
-scrollToTop =
-    Dom.setViewport 0 0
-        -- It's not worth showing the user anything special if scrolling fails.
-        -- If anything, we'd log this to an error recording service.
-        |> Task.onError (\_ -> Task.succeed ())
-
-
-
--- SUBSCRIPTIONS
-
-
-subscriptions : Model -> Sub Msg
-subscriptions model =
-    Session.changes GotSession (Session.navKey model.session)
-
-
-
--- EXPORT
-
-
-toSession : Model -> Session
-toSession model =
-    model.session
+    case feedTabs of
+        YourFeed _ -> Effect.fetchYourFeed toFeedMsg page
+        GlobalFeed -> Effect.fetchGlobalFeed toFeedMsg page
+        TagFeed tag -> Effect.fetchTagFeed toFeedMsg page tag

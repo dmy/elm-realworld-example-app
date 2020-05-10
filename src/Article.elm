@@ -1,4 +1,4 @@
-module Article exposing (Article, Full, Preview, author, body, favorite, favoriteButton, fetch, fromPreview, fullDecoder, mapAuthor, metadata, previewDecoder, slug, unfavorite, unfavoriteButton)
+module Article exposing (Article, Full, Metadata, Preview, author, body, create, edit, favorite, fetch, fromPreview, fullDecoder, mapAuthor, metadata, previewDecoder, slug, unfavorite)
 
 {-| The interface to the Article data structure.
 
@@ -15,21 +15,12 @@ import Api exposing (Cred)
 import Api.Endpoint as Endpoint
 import Article.Body as Body exposing (Body)
 import Article.Slug as Slug exposing (Slug)
-import Article.Tag as Tag exposing (Tag)
 import Author exposing (Author)
-import Html exposing (Attribute, Html, i)
-import Html.Attributes exposing (class)
-import Html.Events exposing (stopPropagationOn)
 import Http
 import Iso8601
 import Json.Decode as Decode exposing (Decoder)
-import Json.Decode.Pipeline exposing (custom, hardcoded, required)
 import Json.Encode as Encode
-import Markdown
-import Profile exposing (Profile)
 import Time
-import Username as Username exposing (Username)
-import Viewer exposing (Viewer)
 
 
 
@@ -170,105 +161,116 @@ fromPreview newBody (Article info Preview) =
 
 previewDecoder : Maybe Cred -> Decoder (Article Preview)
 previewDecoder maybeCred =
-    Decode.succeed Article
-        |> custom (internalsDecoder maybeCred)
-        |> hardcoded Preview
+    Decode.map2 Article
+        (internalsDecoder maybeCred)
+        (Decode.succeed Preview)
 
 
 fullDecoder : Maybe Cred -> Decoder (Article Full)
 fullDecoder maybeCred =
-    Decode.succeed Article
-        |> custom (internalsDecoder maybeCred)
-        |> required "body" (Decode.map Full Body.decoder)
+    Decode.map2 Article
+        (internalsDecoder maybeCred)
+        (Decode.field "body" (Decode.map Full Body.decoder))
 
 
 internalsDecoder : Maybe Cred -> Decoder Internals
 internalsDecoder maybeCred =
-    Decode.succeed Internals
-        |> required "slug" Slug.decoder
-        |> required "author" (Author.decoder maybeCred)
-        |> custom metadataDecoder
+    Decode.map3 Internals
+        (Decode.field "slug" Slug.decoder)
+        (Decode.field "author" (Author.decoder maybeCred))
+        metadataDecoder
 
 
 metadataDecoder : Decoder Metadata
 metadataDecoder =
-    Decode.succeed Metadata
-        |> required "description" (Decode.map (Maybe.withDefault "") (Decode.nullable Decode.string))
-        |> required "title" Decode.string
-        |> required "tagList" (Decode.list Decode.string)
-        |> required "createdAt" Iso8601.decoder
-        |> required "favorited" Decode.bool
-        |> required "favoritesCount" Decode.int
+    Decode.map6 Metadata
+        (Decode.field "description" (Decode.map (Maybe.withDefault "") (Decode.nullable Decode.string)))
+        (Decode.field "title" Decode.string)
+        (Decode.field "tagList" (Decode.list Decode.string))
+        (Decode.field "createdAt" Iso8601.decoder)
+        (Decode.field "favorited" Decode.bool)
+        (Decode.field "favoritesCount" Decode.int)
 
 
 
 -- SINGLE
 
 
-fetch : Maybe Cred -> Slug -> Http.Request (Article Full)
-fetch maybeCred articleSlug =
+fetch : Slug -> Maybe Cred -> Api.Request (Article Full)
+fetch articleSlug maybeCred =
     Decode.field "article" (fullDecoder maybeCred)
         |> Api.get (Endpoint.article articleSlug) maybeCred
+
+
+
+-- EDIT
+
+
+create :
+    { title : String, description : String, body : String, tags : String }
+    -> Cred
+    -> Api.Request (Article Full)
+create article cred =
+    let
+        articleObject =
+            Encode.object
+                [ ( "title", Encode.string <| String.trim article.title )
+                , ( "description", Encode.string <| String.trim article.description )
+                , ( "body", Encode.string <| String.trim article.body )
+                , ( "tagList", Encode.list Encode.string (tagsFromString article.tags) )
+                ]
+
+        jsonBody =
+            Encode.object [ ( "article", articleObject ) ]
+                |> Http.jsonBody
+    in
+    Decode.field "article" (fullDecoder (Just cred))
+        |> Api.post (Endpoint.articles []) (Just cred) jsonBody
+
+
+tagsFromString : String -> List String
+tagsFromString str =
+    String.split " " str
+        |> List.map String.trim
+        |> List.filter (not << String.isEmpty)
+
+
+edit :
+    Slug
+    -> { r | title : String, description : String, body : String }
+    -> Cred
+    -> Api.Request (Article Full)
+edit articleSlug article cred =
+    let
+        articleObject =
+            Encode.object
+                [ ( "title", Encode.string article.title )
+                , ( "description", Encode.string article.description )
+                , ( "body", Encode.string article.body )
+                ]
+
+        jsonBody =
+            Encode.object [ ( "article", articleObject ) ]
+                |> Http.jsonBody
+    in
+    Decode.field "article" (fullDecoder (Just cred))
+        |> Api.put (Endpoint.article articleSlug) cred jsonBody
 
 
 
 -- FAVORITE
 
 
-favorite : Slug -> Cred -> Http.Request (Article Preview)
+favorite : Slug -> Cred -> Api.Request (Article Preview)
 favorite articleSlug cred =
     Api.post (Endpoint.favorite articleSlug) (Just cred) Http.emptyBody (faveDecoder cred)
 
 
-unfavorite : Slug -> Cred -> Http.Request (Article Preview)
+unfavorite : Slug -> Cred -> Api.Request (Article Preview)
 unfavorite articleSlug cred =
-    Api.delete (Endpoint.favorite articleSlug) cred Http.emptyBody (faveDecoder cred)
+    Api.delete (Endpoint.favorite articleSlug) cred (faveDecoder cred)
 
 
 faveDecoder : Cred -> Decoder (Article Preview)
 faveDecoder cred =
     Decode.field "article" (previewDecoder (Just cred))
-
-
-{-| This is a "build your own element" API.
-
-You pass it some configuration, followed by a `List (Attribute msg)` and a
-`List (Html msg)`, just like any standard Html element.
-
--}
-favoriteButton :
-    Cred
-    -> msg
-    -> List (Attribute msg)
-    -> List (Html msg)
-    -> Html msg
-favoriteButton _ msg attrs kids =
-    toggleFavoriteButton "btn btn-sm btn-outline-primary" msg attrs kids
-
-
-unfavoriteButton :
-    Cred
-    -> msg
-    -> List (Attribute msg)
-    -> List (Html msg)
-    -> Html msg
-unfavoriteButton _ msg attrs kids =
-    toggleFavoriteButton "btn btn-sm btn-primary" msg attrs kids
-
-
-toggleFavoriteButton :
-    String
-    -> msg
-    -> List (Attribute msg)
-    -> List (Html msg)
-    -> Html msg
-toggleFavoriteButton classStr msg attrs kids =
-    Html.button
-        (class classStr :: onClickStopPropagation msg :: attrs)
-        (i [ class "ion-heart" ] [] :: kids)
-
-
-onClickStopPropagation : msg -> Attribute msg
-onClickStopPropagation msg =
-    stopPropagationOn "click"
-        (Decode.succeed ( msg, True ))

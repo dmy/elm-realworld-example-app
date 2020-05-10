@@ -1,56 +1,39 @@
-module Page.Article exposing (Model, Msg, init, subscriptions, toSession, update, view)
+module Page.Article exposing (Model, Msg, init, view, update)
 
 {-| Viewing an individual article.
+
+@docs Model, Msg, init, view, update
+
 -}
 
 import Api exposing (Cred)
-import Api.Endpoint as Endpoint
-import Article exposing (Article, Full, Preview)
+import Article exposing (Article, Full)
 import Article.Body exposing (Body)
 import Article.Comment as Comment exposing (Comment)
-import Article.Slug as Slug exposing (Slug)
+import Article.Comment.Id exposing (CommentId)
+import Article.Slug exposing (Slug)
 import Author exposing (Author(..), FollowedAuthor, UnfollowedAuthor)
-import Avatar
-import Browser.Navigation as Nav
-import CommentId exposing (CommentId)
-import Html exposing (..)
-import Html.Attributes exposing (attribute, class, disabled, href, id, placeholder, value)
-import Html.Events exposing (onClick, onInput, onSubmit)
-import Http
-import Json.Decode as Decode
-import Loading
-import Log
-import Page
-import Profile exposing (Profile)
+import Effect exposing (Effect)
+import Errors exposing (Errors)
+import Html exposing (Html)
+import Remote exposing (Remote)
 import Route
 import Session exposing (Session)
-import Task exposing (Task)
 import Time
-import Timestamp
-import Username exposing (Username)
-import Viewer exposing (Viewer)
+import View
+import View.Button
 
 
 
 -- MODEL
 
 
+{-| -}
 type alias Model =
-    { session : Session
-    , timeZone : Time.Zone
-    , errors : List String
-
-    -- Loaded independently from server
-    , comments : Status ( CommentText, List Comment )
-    , article : Status (Article Full)
+    { errors : Errors
+    , comments : Remote ( CommentText, List Comment )
+    , article : Remote (Article Full)
     }
-
-
-type Status a
-    = Loading
-    | LoadingSlowly
-    | Loaded a
-    | Failed
 
 
 type CommentText
@@ -58,25 +41,16 @@ type CommentText
     | Sending String
 
 
-init : Session -> Slug -> ( Model, Cmd Msg )
-init session slug =
-    let
-        maybeCred =
-            Session.cred session
-    in
-    ( { session = session
-      , timeZone = Time.utc
-      , errors = []
-      , comments = Loading
-      , article = Loading
+{-| -}
+init : Slug -> ( Model, Effect Msg )
+init slug =
+    ( { errors = Errors.none
+      , comments = Remote.loading "comments"
+      , article = Remote.loading "article"
       }
-    , Cmd.batch
-        [ Article.fetch maybeCred slug
-            |> Http.send CompletedLoadArticle
-        , Comment.list maybeCred slug
-            |> Http.send CompletedLoadComments
-        , Task.perform GotTimeZone Time.here
-        , Task.perform (\_ -> PassedSlowLoadThreshold) Loading.slowThreshold
+    , Effect.batch
+        [ Effect.fetchArticle CompletedLoadArticle slug
+        , Effect.fetchComments CompletedLoadComments slug
         ]
     )
 
@@ -85,462 +59,263 @@ init session slug =
 -- VIEW
 
 
-view : Model -> { title : String, content : Html Msg }
-view model =
-    case model.article of
-        Loaded article ->
-            let
-                { title } =
-                    Article.metadata article
+{-| -}
+view : Time.Zone -> Session -> Model -> { title : String, content : Html Msg }
+view timeZone session model =
+    { title =
+        case Remote.get model.article of
+            Just article -> (Article.metadata article).title
+            Nothing -> "Article"
+    , content = Remote.view (viewArticle timeZone session model) model.article
+    }
 
-                author =
-                    Article.author article
 
-                avatar =
-                    Profile.avatar (Author.profile author)
+viewArticle : Time.Zone -> Session -> Model -> Article Full -> Html Msg
+viewArticle timeZone session model article =
+    let
+        slug =
+            Article.slug article
+    in
+    View.article timeZone model.errors ClickedDismissErrors article (viewButtons session article) <|
+        Remote.viewList (viewComments timeZone session slug) model.comments
 
-                slug =
-                    Article.slug article
 
-                profile =
-                    Author.profile author
+viewComments : Time.Zone -> Session -> Slug -> ( CommentText, List Comment ) -> List (Html Msg)
+viewComments timeZone session slug ( commentText, comments ) =
+    -- Don't let users add comments until they can see the
+    -- existing comments! Otherwise you may be about to repeat
+    -- something that's already been said.
+    viewAddComment session slug commentText
+        :: List.map (viewComment timeZone session slug) comments
 
-                buttons =
-                    case Session.cred model.session of
-                        Just cred ->
-                            viewButtons cred article author
 
-                        Nothing ->
-                            []
-            in
-            { title = title
-            , content =
-                div [ class "article-page" ]
-                    [ div [ class "banner" ]
-                        [ div [ class "container" ]
-                            [ h1 [] [ text title ]
-                            , div [ class "article-meta" ] <|
-                                List.append
-                                    [ a [ Route.href (Route.Profile (Author.username author)) ]
-                                        [ img [ Avatar.src (Profile.avatar profile) ] [] ]
-                                    , div [ class "info" ]
-                                        [ Author.view (Author.username author)
-                                        , Timestamp.view model.timeZone (Article.metadata article).createdAt
-                                        ]
-                                    ]
-                                    buttons
-                            , Page.viewErrors ClickedDismissErrors model.errors
-                            ]
-                        ]
-                    , div [ class "container page" ]
-                        [ div [ class "row article-content" ]
-                            [ div [ class "col-md-12" ]
-                                [ Article.Body.toHtml (Article.body article) [] ]
-                            ]
-                        , hr [] []
-                        , div [ class "article-actions" ]
-                            [ div [ class "article-meta" ] <|
-                                List.append
-                                    [ a [ Route.href (Route.Profile (Author.username author)) ]
-                                        [ img [ Avatar.src avatar ] [] ]
-                                    , div [ class "info" ]
-                                        [ Author.view (Author.username author)
-                                        , Timestamp.view model.timeZone (Article.metadata article).createdAt
-                                        ]
-                                    ]
-                                    buttons
-                            ]
-                        , div [ class "row" ]
-                            [ div [ class "col-xs-12 col-md-8 offset-md-2" ] <|
-                                -- Don't render the comments until the article has loaded!
-                                case model.comments of
-                                    Loading ->
-                                        []
+viewAddComment : Session -> Slug -> CommentText -> Html Msg
+viewAddComment session slug commentText =
+    let
+        ( commentStr, disabled ) =
+            case commentText of
+                Editing str -> ( str, False )
+                Sending str -> ( str, True )
+    in
+    View.newComment session
+        { onInput = EnteredCommentText
+        , onSubmit = ClickedPostComment slug
+        , disabled = disabled
+        , comment = commentStr
+        }
 
-                                    LoadingSlowly ->
-                                        [ Loading.icon ]
 
-                                    Loaded ( commentText, comments ) ->
-                                        -- Don't let users add comments until they can
-                                        -- see the existing comments! Otherwise you
-                                        -- may be about to repeat something that's
-                                        -- already been said.
-                                        viewAddComment slug commentText (Session.viewer model.session)
-                                            :: List.map (viewComment model.timeZone slug) comments
-
-                                    Failed ->
-                                        [ Loading.error "comments" ]
-                            ]
-                        ]
+viewButtons : Session -> Article Full -> List (Html Msg)
+viewButtons session article =
+    case Session.credentials session of
+        Just cred ->
+            case Article.author article of
+                Followed author ->
+                    [ View.Button.unfollow ClickedUnfollow cred author
+                    , Html.text " "
+                    , favoriteButton cred article
                     ]
-            }
 
-        Loading ->
-            { title = "Article", content = text "" }
-
-        LoadingSlowly ->
-            { title = "Article", content = Loading.icon }
-
-        Failed ->
-            { title = "Article", content = Loading.error "article" }
-
-
-viewAddComment : Slug -> CommentText -> Maybe Viewer -> Html Msg
-viewAddComment slug commentText maybeViewer =
-    case maybeViewer of
-        Just viewer ->
-            let
-                avatar =
-                    Viewer.avatar viewer
-
-                cred =
-                    Viewer.cred viewer
-
-                ( commentStr, buttonAttrs ) =
-                    case commentText of
-                        Editing str ->
-                            ( str, [] )
-
-                        Sending str ->
-                            ( str, [ disabled True ] )
-            in
-            Html.form [ class "card comment-form", onSubmit (ClickedPostComment cred slug) ]
-                [ div [ class "card-block" ]
-                    [ textarea
-                        [ class "form-control"
-                        , placeholder "Write a comment..."
-                        , attribute "rows" "3"
-                        , onInput EnteredCommentText
-                        , value commentStr
-                        ]
-                        []
+                Unfollowed author ->
+                    [ View.Button.follow ClickedFollow cred author
+                    , Html.text " "
+                    , favoriteButton cred article
                     ]
-                , div [ class "card-footer" ]
-                    [ img [ class "comment-author-img", Avatar.src avatar ] []
-                    , button
-                        (class "btn btn-sm btn-primary" :: buttonAttrs)
-                        [ text "Post Comment" ]
+
+                Authenticated _ ->
+                    [ View.Button.edit " Edit Article" (Route.EditArticle (Article.slug article))
+                    , Html.text " "
+                    , View.Button.delete " Delete Article" (ClickedDeleteArticle cred (Article.slug article))
                     ]
-                ]
 
         Nothing ->
-            p []
-                [ a [ Route.href Route.Login ] [ text "Sign in" ]
-                , text " or "
-                , a [ Route.href Route.Register ] [ text "sign up" ]
-                , text " to comment."
-                ]
+            []
 
 
-viewButtons : Cred -> Article Full -> Author -> List (Html Msg)
-viewButtons cred article author =
-    case author of
-        IsFollowing followedAuthor ->
-            [ Author.unfollowButton ClickedUnfollow cred followedAuthor
-            , text " "
-            , favoriteButton cred article
-            ]
-
-        IsNotFollowing unfollowedAuthor ->
-            [ Author.followButton ClickedFollow cred unfollowedAuthor
-            , text " "
-            , favoriteButton cred article
-            ]
-
-        IsViewer _ _ ->
-            [ editButton article
-            , text " "
-            , deleteButton cred article
-            ]
-
-
-viewComment : Time.Zone -> Slug -> Comment -> Html Msg
-viewComment timeZone slug comment =
-    let
-        author =
-            Comment.author comment
-
-        profile =
-            Author.profile author
-
-        authorUsername =
-            Author.username author
-
-        deleteCommentButton =
-            case author of
-                IsViewer cred _ ->
-                    let
-                        msg =
-                            ClickedDeleteComment cred slug (Comment.id comment)
-                    in
-                    span
-                        [ class "mod-options"
-                        , onClick msg
-                        ]
-                        [ i [ class "ion-trash-a" ] [] ]
-
-                _ ->
-                    -- You can't delete other peoples' comments!
-                    text ""
-
-        timestamp =
-            Timestamp.format timeZone (Comment.createdAt comment)
-    in
-    div [ class "card" ]
-        [ div [ class "card-block" ]
-            [ p [ class "card-text" ] [ text (Comment.body comment) ] ]
-        , div [ class "card-footer" ]
-            [ a [ class "comment-author", href "" ]
-                [ img [ class "comment-author-img", Avatar.src (Profile.avatar profile) ] []
-                , text " "
-                ]
-            , text " "
-            , a [ class "comment-author", Route.href (Route.Profile authorUsername) ]
-                [ text (Username.toString authorUsername) ]
-            , span [ class "date-posted" ] [ text timestamp ]
-            , deleteCommentButton
-            ]
-        ]
+viewComment : Time.Zone -> Session -> Slug -> Comment -> Html Msg
+viewComment timeZone session slug comment =
+    View.comment timeZone session (ClickedDeleteComment slug) comment
 
 
 
 -- UPDATE
 
 
+{-| -}
 type Msg
     = ClickedDeleteArticle Cred Slug
-    | ClickedDeleteComment Cred Slug CommentId
+    | ClickedDeleteComment Slug Cred CommentId
     | ClickedDismissErrors
     | ClickedFavorite Cred Slug Body
     | ClickedUnfavorite Cred Slug Body
     | ClickedFollow Cred UnfollowedAuthor
     | ClickedUnfollow Cred FollowedAuthor
-    | ClickedPostComment Cred Slug
+    | ClickedPostComment Slug Cred
     | EnteredCommentText String
-    | CompletedLoadArticle (Result Http.Error (Article Full))
-    | CompletedLoadComments (Result Http.Error (List Comment))
-    | CompletedDeleteArticle (Result Http.Error ())
-    | CompletedDeleteComment CommentId (Result Http.Error ())
-    | CompletedFavoriteChange (Result Http.Error (Article Full))
-    | CompletedFollowChange (Result Http.Error Author)
-    | CompletedPostComment (Result Http.Error Comment)
-    | GotTimeZone Time.Zone
-    | GotSession Session
-    | PassedSlowLoadThreshold
+    | CompletedLoadArticle (Result Errors (Article Full))
+    | CompletedLoadComments (Result Errors (List Comment))
+    | CompletedDeleteArticle (Result Errors ())
+    | CompletedDeleteComment CommentId (Result Errors ())
+    | CompletedFavoriteChange (Result Errors (Article Full))
+    | CompletedFollowChange (Result Errors Author)
+    | CompletedPostComment (Result Errors Comment)
 
 
-update : Msg -> Model -> ( Model, Cmd Msg )
+{-| -}
+update : Msg -> Model -> ( Model, Effect Msg )
 update msg model =
     case msg of
         ClickedDismissErrors ->
-            ( { model | errors = [] }, Cmd.none )
+            ( { model | errors = Errors.none }, Effect.none )
 
         ClickedFavorite cred slug body ->
-            ( model, fave Article.favorite cred slug body )
+            ( model
+            , Effect.favorite (Result.map (Article.fromPreview body) >> CompletedFavoriteChange) cred slug
+            )
 
         ClickedUnfavorite cred slug body ->
-            ( model, fave Article.unfavorite cred slug body )
+            ( model
+            , Effect.unfavorite (Result.map (Article.fromPreview body) >> CompletedFavoriteChange) cred slug
+            )
 
         CompletedLoadArticle (Ok article) ->
-            ( { model | article = Loaded article }, Cmd.none )
+            ( { model | article = Remote.loaded article model.article }
+            , Effect.none
+            )
 
-        CompletedLoadArticle (Err error) ->
-            ( { model | article = Failed }
-            , Log.error
+        CompletedLoadArticle (Err _) ->
+            ( { model | article = Remote.failed model.article }
+            , Effect.logError
             )
 
         CompletedLoadComments (Ok comments) ->
-            ( { model | comments = Loaded ( Editing "", comments ) }, Cmd.none )
+            ( { model | comments = Remote.loaded ( Editing "", comments ) model.comments }
+            , Effect.none
+            )
 
-        CompletedLoadComments (Err error) ->
-            ( { model | article = Failed }, Log.error )
+        CompletedLoadComments (Err _) ->
+            ( { model | comments = Remote.failed model.comments }
+            , Effect.logError
+            )
 
-        CompletedFavoriteChange (Ok newArticle) ->
-            ( { model | article = Loaded newArticle }, Cmd.none )
+        CompletedFavoriteChange (Ok article) ->
+            ( { model | article = Remote.loaded article model.article }
+            , Effect.none
+            )
 
-        CompletedFavoriteChange (Err error) ->
-            ( { model | errors = Api.addServerError model.errors }
-            , Log.error
+        CompletedFavoriteChange (Err errors) ->
+            ( { model | errors = Errors.prepend errors model.errors }
+            , Effect.logError
             )
 
         ClickedUnfollow cred followedAuthor ->
             ( model
-            , Author.requestUnfollow followedAuthor cred
-                |> Http.send CompletedFollowChange
+            , Effect.unfollow CompletedFollowChange cred followedAuthor
             )
 
         ClickedFollow cred unfollowedAuthor ->
             ( model
-            , Author.requestFollow unfollowedAuthor cred
-                |> Http.send CompletedFollowChange
+            , Effect.follow CompletedFollowChange cred unfollowedAuthor
             )
 
         CompletedFollowChange (Ok newAuthor) ->
-            case model.article of
-                Loaded article ->
-                    ( { model | article = Loaded (Article.mapAuthor (\_ -> newAuthor) article) }, Cmd.none )
+            case Remote.get model.article of
+                Just article ->
+                    ( { model | article = Remote.loaded (Article.mapAuthor (\_ -> newAuthor) article) model.article }
+                    , Effect.none
+                    )
 
-                _ ->
-                    ( model, Log.error )
+                Nothing ->
+                    ( model, Effect.logError )
 
-        CompletedFollowChange (Err error) ->
-            ( { model | errors = Api.addServerError model.errors }
-            , Log.error
+        CompletedFollowChange (Err errors) ->
+            ( { model | errors = Errors.prepend errors model.errors }
+            , Effect.logError
             )
 
         EnteredCommentText str ->
-            case model.comments of
-                Loaded ( Editing _, comments ) ->
+            case Remote.get model.comments of
+                Just ( Editing _, comments ) ->
                     -- You can only edit comment text once comments have loaded
                     -- successfully, and when the comment is not currently
                     -- being submitted.
-                    ( { model | comments = Loaded ( Editing str, comments ) }
-                    , Cmd.none
+                    ( { model | comments = Remote.loaded ( Editing str, comments ) model.comments }
+                    , Effect.none
                     )
 
                 _ ->
-                    ( model, Log.error )
+                    ( model, Effect.logError )
 
-        ClickedPostComment cred slug ->
-            case model.comments of
-                Loaded ( Editing "", comments ) ->
+        ClickedPostComment slug cred ->
+            case Remote.get model.comments of
+                Just ( Editing "", _ ) ->
                     -- No posting empty comments!
-                    -- We don't use Log.error here because this isn't an error,
+                    -- We don't use Effect.logError here because this isn't an error,
                     -- it just doesn't do anything.
-                    ( model, Cmd.none )
+                    ( model, Effect.none )
 
-                Loaded ( Editing str, comments ) ->
-                    ( { model | comments = Loaded ( Sending str, comments ) }
-                    , cred
-                        |> Comment.post slug str
-                        |> Http.send CompletedPostComment
+                Just ( Editing str, comments ) ->
+                    ( { model | comments = Remote.loaded ( Sending str, comments ) model.comments }
+                    , Effect.postComment CompletedPostComment cred slug str
                     )
 
                 _ ->
                     -- Either we have no comment to post, or there's already
                     -- one in the process of being posted, or we don't have
                     -- a valid article, in which case how did we post this?
-                    ( model, Log.error )
+                    ( model, Effect.logError )
 
         CompletedPostComment (Ok comment) ->
-            case model.comments of
-                Loaded ( _, comments ) ->
-                    ( { model | comments = Loaded ( Editing "", comment :: comments ) }
-                    , Cmd.none
+            case Remote.get model.comments of
+                Just ( _, comments ) ->
+                    ( { model | comments = Remote.loaded ( Editing "", comment :: comments ) model.comments }
+                    , Effect.none
                     )
 
-                _ ->
-                    ( model, Log.error )
+                Nothing ->
+                    ( model, Effect.logError )
 
-        CompletedPostComment (Err error) ->
-            ( { model | errors = Api.addServerError model.errors }
-            , Log.error
+        CompletedPostComment (Err errors) ->
+            ( { model | errors = Errors.prepend errors model.errors }
+            , Effect.logError
             )
 
-        ClickedDeleteComment cred slug id ->
+        ClickedDeleteComment slug cred id ->
             ( model
-            , cred
-                |> Comment.delete slug id
-                |> Http.send (CompletedDeleteComment id)
+            , Effect.deleteComment (CompletedDeleteComment id) cred slug id
             )
 
         CompletedDeleteComment id (Ok ()) ->
-            case model.comments of
-                Loaded ( commentText, comments ) ->
-                    ( { model | comments = Loaded ( commentText, withoutComment id comments ) }
-                    , Cmd.none
+            case Remote.get model.comments of
+                Just ( commentText, comments ) ->
+                    ( { model | comments = Remote.loaded ( commentText, withoutComment id comments ) model.comments }
+                    , Effect.none
                     )
 
-                _ ->
-                    ( model, Log.error )
+                Nothing ->
+                    ( model, Effect.logError )
 
-        CompletedDeleteComment id (Err error) ->
-            ( { model | errors = Api.addServerError model.errors }
-            , Log.error
+        CompletedDeleteComment _ (Err errors) ->
+            ( { model | errors = Errors.prepend errors model.errors }
+            , Effect.logError
             )
 
         ClickedDeleteArticle cred slug ->
             ( model
-            , delete slug cred
-                |> Http.send CompletedDeleteArticle
+            , Effect.deleteArticle CompletedDeleteArticle cred slug
             )
 
         CompletedDeleteArticle (Ok ()) ->
-            ( model, Route.replaceUrl (Session.navKey model.session) Route.Home )
+            ( model, Effect.replaceUrl Route.Home )
 
-        CompletedDeleteArticle (Err error) ->
-            ( { model | errors = Api.addServerError model.errors }
-            , Log.error
+        CompletedDeleteArticle (Err errors) ->
+            ( { model | errors = Errors.prepend errors model.errors }
+            , Effect.logError
             )
-
-        GotTimeZone tz ->
-            ( { model | timeZone = tz }, Cmd.none )
-
-        GotSession session ->
-            ( { model | session = session }
-            , Route.replaceUrl (Session.navKey session) Route.Home
-            )
-
-        PassedSlowLoadThreshold ->
-            let
-                -- If any data is still Loading, change it to LoadingSlowly
-                -- so `view` knows to render a spinner.
-                article =
-                    case model.article of
-                        Loading ->
-                            LoadingSlowly
-
-                        other ->
-                            other
-
-                comments =
-                    case model.comments of
-                        Loading ->
-                            LoadingSlowly
-
-                        other ->
-                            other
-            in
-            ( { model | article = article, comments = comments }, Cmd.none )
-
-
-
--- SUBSCRIPTIONS
-
-
-subscriptions : Model -> Sub Msg
-subscriptions model =
-    Session.changes GotSession (Session.navKey model.session)
-
-
-
--- HTTP
-
-
-delete : Slug -> Cred -> Http.Request ()
-delete slug cred =
-    Api.delete (Endpoint.article slug) cred Http.emptyBody (Decode.succeed ())
-
-
-
--- EXPORT
-
-
-toSession : Model -> Session
-toSession model =
-    model.session
 
 
 
 -- INTERNAL
-
-
-fave : (Slug -> Cred -> Http.Request (Article Preview)) -> Cred -> Slug -> Body -> Cmd Msg
-fave toRequest cred slug body =
-    toRequest slug cred
-        |> Http.toTask
-        |> Task.map (Article.fromPreview body)
-        |> Task.attempt CompletedFavoriteChange
 
 
 withoutComment : CommentId -> List Comment -> List Comment
@@ -561,26 +336,10 @@ favoriteButton cred article =
             Article.body article
 
         kids =
-            [ text (" Favorite Article (" ++ String.fromInt favoritesCount ++ ")") ]
+            [ Html.text (" Favorite Article (" ++ String.fromInt favoritesCount ++ ")") ]
     in
     if favorited then
-        Article.unfavoriteButton cred (ClickedUnfavorite cred slug body) [] kids
+        View.Button.unfavorite (ClickedUnfavorite cred slug body) [] kids
 
     else
-        Article.favoriteButton cred (ClickedFavorite cred slug body) [] kids
-
-
-deleteButton : Cred -> Article a -> Html Msg
-deleteButton cred article =
-    let
-        msg =
-            ClickedDeleteArticle cred (Article.slug article)
-    in
-    button [ class "btn btn-outline-danger btn-sm", onClick msg ]
-        [ i [ class "ion-trash-a" ] [], text " Delete Article" ]
-
-
-editButton : Article a -> Html Msg
-editButton article =
-    a [ class "btn btn-outline-secondary btn-sm", Route.href (Route.EditArticle (Article.slug article)) ]
-        [ i [ class "ion-edit" ] [], text " Edit Article" ]
+        View.Button.favorite (ClickedFavorite cred slug body) [] kids

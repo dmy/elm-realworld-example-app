@@ -1,13 +1,13 @@
-module Route exposing (Route(..), fromUrl, href, replaceUrl)
+module Route exposing (Route(..), fromUrl, href, pushUrl, replaceUrl)
 
 import Article.Slug as Slug exposing (Slug)
+import Author.Username as Username exposing (Username)
 import Browser.Navigation as Nav
 import Html exposing (Attribute)
 import Html.Attributes as Attr
-import Profile exposing (Profile)
 import Url exposing (Url)
-import Url.Parser as Parser exposing ((</>), Parser, oneOf, s, string)
-import Username exposing (Username)
+import Url.Builder
+import Url.Parser as Parser exposing ((</>), Parser, oneOf, s)
 
 
 
@@ -16,7 +16,6 @@ import Username exposing (Username)
 
 type Route
     = Home
-    | Root
     | Login
     | Logout
     | Register
@@ -51,6 +50,11 @@ href targetRoute =
     Attr.href (routeToString targetRoute)
 
 
+pushUrl : Nav.Key -> Route -> Cmd msg
+pushUrl key route =
+    Nav.pushUrl key (routeToString route)
+
+
 replaceUrl : Nav.Key -> Route -> Cmd msg
 replaceUrl key route =
     Nav.replaceUrl key (routeToString route)
@@ -71,38 +75,18 @@ fromUrl url =
 
 routeToString : Route -> String
 routeToString page =
-    "#/" ++ String.join "/" (routeToPieces page)
+    Url.Builder.relative ("#" :: routeToPieces page) []
 
 
 routeToPieces : Route -> List String
 routeToPieces page =
     case page of
-        Home ->
-            []
-
-        Root ->
-            []
-
-        Login ->
-            [ "login" ]
-
-        Logout ->
-            [ "logout" ]
-
-        Register ->
-            [ "register" ]
-
-        Settings ->
-            [ "settings" ]
-
-        Article slug ->
-            [ "article", Slug.toString slug ]
-
-        Profile username ->
-            [ "profile", Username.toString username ]
-
-        NewArticle ->
-            [ "editor" ]
-
-        EditArticle slug ->
-            [ "editor", Slug.toString slug ]
+        Home -> []
+        Login -> [ "login" ]
+        Logout -> [ "logout" ]
+        Register -> [ "register" ]
+        Settings -> [ "settings" ]
+        Article slug -> [ "article", Slug.toString slug ]
+        Profile username -> [ "profile", Username.toString username ]
+        NewArticle -> [ "editor" ]
+        EditArticle slug -> [ "editor", Slug.toString slug ]

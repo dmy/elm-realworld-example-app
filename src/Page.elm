@@ -1,86 +1,161 @@
-module Page exposing (Page(..), view, viewErrors)
+module Page exposing
+    ( Msg, Page
+    , blank
+    , changeRouteTo
+    , view, mapDocument
+    , update
+    )
 
-import Api exposing (Cred)
-import Avatar
+{-| This module is responsible to handle subpages.
+
+
+# Types
+
+@docs Msg, Page
+
+
+# Creation
+
+@docs blank
+
+
+# Routing
+
+@docs changeRouteTo
+
+
+# View
+
+@docs view, mapDocument
+
+
+# Update
+
+@docs update
+
+-}
+
+import Article.Slug exposing (Slug)
+import Author exposing (Author(..))
+import Author.Username exposing (Username)
 import Browser exposing (Document)
-import Html exposing (Html, a, button, div, footer, i, img, li, nav, p, span, text, ul)
-import Html.Attributes exposing (class, classList, href, style)
-import Html.Events exposing (onClick)
-import Profile
+import Effect exposing (Effect)
+import Env exposing (Env)
+import Html exposing (Html, text)
+import Page.Article as Article
+import Page.Article.Editor as Editor
+import Page.Blank as Blank
+import Page.Home as Home
+import Page.Login as Login
+import Page.NotFound as NotFound
+import Page.Profile as Profile
+import Page.Register as Register
+import Page.Settings as Settings
 import Route exposing (Route)
 import Session exposing (Session)
-import Username exposing (Username)
-import Viewer exposing (Viewer)
+import View
+import View.Icon
 
 
-{-| Determines which navbar link (if any) will be rendered as active.
-
-Note that we don't enumerate every page here, because the navbar doesn't
-have links for every page. Anything that's not part of the navbar falls
-under Other.
-
+{-| An opaque type to store the subpage and its model.
 -}
 type Page
-    = Other
-    | Home
-    | Login
-    | Register
-    | Settings
-    | Profile Username
-    | NewArticle
+    = Blank
+    | NotFound
+    | Home Home.Model
+    | Settings Settings.Model
+    | Login Login.Model
+    | Register Register.Model
+    | Profile Username Profile.Model
+    | Article Article.Model
+    | Editor (Maybe Slug) Editor.Model
 
 
-{-| Take a page's Html and frames it with a header and footer.
-
-The caller provides the current user, so we can display in either
-"signed in" (rendering username) or "signed out" mode.
-
-isLoading is for determining whether we should show a loading spinner
-in the header. (This comes up during slow page transitions.)
-
+{-| An empty page.
 -}
-view : Maybe Viewer -> Page -> { title : String, content : Html msg } -> Document msg
-view maybeViewer page { title, content } =
+blank : Page
+blank =
+    Blank
+
+
+{-| Transform the messages produced by the page.
+-}
+mapDocument : (msg1 -> msg2) -> Document msg1 -> Document msg2
+mapDocument changeMsg { title, body } =
+    { title = title, body = List.map (Html.map changeMsg) body }
+
+
+
+-- VIEW
+
+
+{-| Turns the page into an HTML page.
+-}
+view : Env -> Session -> Page -> Document Msg
+view env session page =
+    let
+        tz =
+            Env.timeZone env
+
+        viewPage toPageMsg config =
+            viewDocument session page config
+                |> mapDocument toPageMsg
+    in
+    case page of
+        Blank ->
+            viewDocument session page Blank.view
+
+        NotFound ->
+            viewDocument session page NotFound.view
+
+        Settings settings ->
+            viewPage GotSettingsMsg (Settings.view session settings)
+
+        Home home ->
+            viewPage GotHomeMsg (Home.view tz session home)
+
+        Login login ->
+            viewPage GotLoginMsg (Login.view login)
+
+        Register register ->
+            viewPage GotRegisterMsg (Register.view register)
+
+        Profile _ profile ->
+            viewPage GotProfileMsg (Profile.view tz session profile)
+
+        Article article ->
+            viewPage GotArticleMsg (Article.view tz session article)
+
+        Editor Nothing editor ->
+            viewPage GotEditorMsg (Editor.view session editor)
+
+        Editor (Just _) editor ->
+            viewPage GotEditorMsg (Editor.view session editor)
+
+
+viewDocument : Session -> Page -> { title : String, content : Html msg } -> Document msg
+viewDocument session page { title, content } =
     { title = title ++ " - Conduit"
-    , body = viewHeader page maybeViewer :: content :: [ viewFooter ]
+    , body = [ viewHeader session page, content, View.footer ]
     }
 
 
-viewHeader : Page -> Maybe Viewer -> Html msg
-viewHeader page maybeViewer =
-    nav [ class "navbar navbar-light" ]
-        [ div [ class "container" ]
-            [ a [ class "navbar-brand", Route.href Route.Home ]
-                [ text "conduit" ]
-            , ul [ class "nav navbar-nav pull-xs-right" ] <|
-                navbarLink page Route.Home [ text "Home" ]
-                    :: viewMenu page maybeViewer
-            ]
-        ]
+viewHeader : Session -> Page -> Html msg
+viewHeader session page =
+    View.header (navbarLink page Route.Home [ Html.text "Home" ] :: viewMenu session page)
 
 
-viewMenu : Page -> Maybe Viewer -> List (Html msg)
-viewMenu page maybeViewer =
+viewMenu : Session -> Page -> List (Html msg)
+viewMenu session page =
     let
         linkTo =
             navbarLink page
     in
-    case maybeViewer of
-        Just viewer ->
-            let
-                username =
-                    Viewer.username viewer
-
-                avatar =
-                    Viewer.avatar viewer
-            in
-            [ linkTo Route.NewArticle [ i [ class "ion-compose" ] [], text "\u{00A0}New Post" ]
-            , linkTo Route.Settings [ i [ class "ion-gear-a" ] [], text "\u{00A0}Settings" ]
-            , linkTo
-                (Route.Profile username)
-                [ img [ class "user-pic", Avatar.src avatar ] []
-                , Username.toHtml username
-                ]
+    case Session.username session of
+        Just username ->
+            [ linkTo Route.NewArticle [ View.Icon.newPost, text "\u{00A0}New Post" ]
+            , linkTo Route.Settings [ View.Icon.settings, text "\u{00A0}Settings" ]
+            , linkTo (Route.Profile username) [ View.avatar session, View.username username ]
             , linkTo Route.Logout [ text "Sign out" ]
             ]
 
@@ -90,67 +165,140 @@ viewMenu page maybeViewer =
             ]
 
 
-viewFooter : Html msg
-viewFooter =
-    footer []
-        [ div [ class "container" ]
-            [ a [ class "logo-font", href "/" ] [ text "conduit" ]
-            , span [ class "attribution" ]
-                [ text "An interactive learning project from "
-                , a [ href "https://thinkster.io" ] [ text "Thinkster" ]
-                , text ". Code & design licensed under MIT."
-                ]
-            ]
-        ]
-
-
 navbarLink : Page -> Route -> List (Html msg) -> Html msg
 navbarLink page route linkContent =
-    li [ classList [ ( "nav-item", True ), ( "active", isActive page route ) ] ]
-        [ a [ class "nav-link", Route.href route ] linkContent ]
+    View.navLink (isActive page route) (Route.href route) linkContent
 
 
 isActive : Page -> Route -> Bool
 isActive page route =
     case ( page, route ) of
-        ( Home, Route.Home ) ->
+        ( Login _, Route.Login ) ->
             True
 
-        ( Login, Route.Login ) ->
+        ( Register _, Route.Register ) ->
             True
 
-        ( Register, Route.Register ) ->
+        ( Home _, Route.Home ) ->
             True
 
-        ( Settings, Route.Settings ) ->
-            True
-
-        ( Profile pageUsername, Route.Profile routeUsername ) ->
+        ( Profile pageUsername _, Route.Profile routeUsername ) ->
             pageUsername == routeUsername
 
-        ( NewArticle, Route.NewArticle ) ->
+        ( Editor Nothing _, Route.NewArticle ) ->
+            True
+
+        ( Settings _, Route.Settings ) ->
             True
 
         _ ->
             False
 
 
-{-| Render dismissable errors. We use this all over the place!
--}
-viewErrors : msg -> List String -> Html msg
-viewErrors dismissErrors errors =
-    if List.isEmpty errors then
-        Html.text ""
 
-    else
-        div
-            [ class "error-messages"
-            , style "position" "fixed"
-            , style "top" "0"
-            , style "background" "rgb(250, 250, 250)"
-            , style "padding" "20px"
-            , style "border" "1px solid"
-            ]
-        <|
-            List.map (\error -> p [] [ text error ]) errors
-                ++ [ button [ onClick dismissErrors ] [ text "Ok" ] ]
+-- UPDATE
+
+
+{-| The subpages messages.
+-}
+type Msg
+    = GotHomeMsg Home.Msg
+    | GotSettingsMsg Settings.Msg
+    | GotLoginMsg Login.Msg
+    | GotRegisterMsg Register.Msg
+    | GotProfileMsg Profile.Msg
+    | GotArticleMsg Article.Msg
+    | GotEditorMsg Editor.Msg
+
+
+{-| Return the page and associated effects associated to a route change.
+-}
+changeRouteTo : Maybe Route -> Session -> Page -> ( Page, Effect Msg )
+changeRouteTo maybeRoute session page =
+    case maybeRoute of
+        Nothing ->
+            ( NotFound, Effect.none )
+
+        Just Route.Logout ->
+            ( page, Effect.logout )
+
+        Just Route.NewArticle ->
+            Editor.initNew
+                |> updateWith (Editor Nothing) GotEditorMsg
+
+        Just (Route.EditArticle slug) ->
+            Editor.initEdit slug
+                |> updateWith (Editor (Just slug)) GotEditorMsg
+
+        Just Route.Settings ->
+            Settings.init
+                |> updateWith Settings GotSettingsMsg
+
+        Just Route.Home ->
+            Home.init session
+                |> updateWith Home GotHomeMsg
+
+        Just Route.Login ->
+            Login.init
+                |> updateWith Login GotLoginMsg
+
+        Just Route.Register ->
+            Register.init
+                |> updateWith Register GotRegisterMsg
+
+        Just (Route.Profile username) ->
+            Profile.init username
+                |> updateWith (Profile username) GotProfileMsg
+
+        Just (Route.Article slug) ->
+            Article.init slug
+                |> updateWith Article GotArticleMsg
+
+
+{-| Update the page from a message, returning an updated page and effects.
+-}
+update : Msg -> Page -> ( Page, Effect Msg )
+update msg page =
+    case ( msg, page ) of
+        ( GotSettingsMsg subMsg, Settings settings ) ->
+            Settings.update subMsg settings
+                |> updateWith Settings GotSettingsMsg
+
+        ( GotLoginMsg subMsg, Login login ) ->
+            Login.update subMsg login
+                |> updateWith Login GotLoginMsg
+
+        ( GotRegisterMsg subMsg, Register register ) ->
+            Register.update subMsg register
+                |> updateWith Register GotRegisterMsg
+
+        ( GotHomeMsg subMsg, Home home ) ->
+            Home.update subMsg home
+                |> updateWith Home GotHomeMsg
+
+        ( GotProfileMsg subMsg, Profile username profile ) ->
+            Profile.update subMsg profile
+                |> updateWith (Profile username) GotProfileMsg
+
+        ( GotArticleMsg subMsg, Article article ) ->
+            Article.update subMsg article
+                |> updateWith Article GotArticleMsg
+
+        ( GotEditorMsg subMsg, Editor slug editor ) ->
+            Editor.update subMsg editor
+                |> updateWith (Editor slug) GotEditorMsg
+
+        ( _, _ ) ->
+            -- Disregard messages that arrived for the wrong page.
+            ( page, Effect.none )
+
+
+updateWith :
+    (pageModel -> Page)
+    -> (pageMsg -> Msg)
+    -> ( pageModel, Effect pageMsg )
+    -> ( Page, Effect Msg )
+updateWith toPage toMsg ( pageModel, effect ) =
+    ( toPage pageModel
+    , Effect.map toMsg effect
+    )
