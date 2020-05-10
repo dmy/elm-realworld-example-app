@@ -39,9 +39,6 @@
         } else {
           localStorage.setItem(storageKey, JSON.stringify(value));
         }
-
-        // Report that the new session was stored successfully.
-        //setTimeout(function() { app.ports.onStoreChange.send(value); }, 0);
       });
 
       // Whenever localStorage changes in another tab, report it if necessary.
