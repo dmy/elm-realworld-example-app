@@ -24,9 +24,10 @@ There are several benefits to this approach that makes it a valuable pattern for
 * All the effects are defined in a single [`Effect`](https://elm-doc-preview.netlify.app/Effect?repo=dmy%2Felm-realworld-example-app) module, which acts as an internal API for the whole application that is guaranteed to list every possible effect.
 * Effects can be inspected and tested, not like `Cmd` values. This allows to test all the application effects, including HTTP requests. See [avh4/elm-program-test](https://github.com/avh4/elm-program-test) and its [section about testing commands](https://elm-program-test.netlify.app/cmds.html#testing-programs-with-cmds).
 * Effects can represent a modification of top level model data, like the [Session](https://elm-doc-preview.netlify.app/Main?repo=dmy%2Felm-realworld-example-app#Model) when [logging in](https://elm-doc-preview.netlify.app/Effect?repo=dmy%2Felm-realworld-example-app#login), or the current page when an URL change is wanted by a subpage `update` function.
-* All the `update` functions keep a clean and concise [`Msg -> Model -> ( Model, Effect Msg )`](https://github.com/dmy/elm-realworld-example-app/blob/master/src/Page/Home.elm#L140) signature.
+* All the `update` functions keep a clean and concise signature returning a tuple:  
+[`Msg -> Model -> ( Model, Effect Msg )`](https://elm-doc-preview.netlify.app/Page.Home?repo=dmy%2Felm-realworld-example-app#update).
 * Because effects carry the minimum information required, some parameters like the `Browser.Navigation.key` are needed only in the effects [`perform`](https://github.com/dmy/elm-realworld-example-app/blob/master/src/Effect.elm#L209) function, which frees the developer from passing them to functions all over the application.
-* A single `NoOp` or ([`Ignored String`](https://elm-doc-preview.netlify.app/Main?repo=dmy%2Felm-realworld-example-app#Msg)) can be used for the whole application.
+* A single `NoOp` or [`Ignored String`](https://elm-doc-preview.netlify.app/Main?repo=dmy%2Felm-realworld-example-app#Msg) can be used for the whole application.
 
 # How to run
 
