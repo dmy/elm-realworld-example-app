@@ -36,8 +36,17 @@ There are several benefits to this approach that makes it a valuable pattern for
 
 # How to run
 
+Install dependencies:
 ```bash
 npm install
-npm run build
+```
+
+To run in debug mode with live reloading:
+```bash
 npm run watch
+```
+
+To build for production:
+```bash
+npm run build
 ```
