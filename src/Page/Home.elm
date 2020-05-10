@@ -68,7 +68,7 @@ init session =
 {-| -}
 view : Time.Zone -> Session -> Model -> { title : String, content : Html Msg }
 view timeZone session model =
-    { title = "Conduit"
+    { title = "Home"
     , content = View.home (viewFeed timeZone session model) (viewTags model.tags)
     }
 
