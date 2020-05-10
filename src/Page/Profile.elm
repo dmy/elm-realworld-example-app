@@ -47,7 +47,7 @@ init username =
       , feedTab = defaultFeedTab
       , feedPage = 1
       , username = username
-      , author = Remote.loading (Username.toString username ++ " profile")
+      , author = Remote.loading (Username.toString username ++ "'s profile")
       , feed = Remote.loading "feed"
       }
     , Effect.batch
