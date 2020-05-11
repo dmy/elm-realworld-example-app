@@ -150,12 +150,21 @@ type Effect msg
 -- APPLICATION
 
 
+{-| The partial top level model required to perform effects.
+-}
+type alias Model r =
+    { r
+        | session : Session
+        , env : Env
+    }
+
+
 {-| A custom application that will turn `init` and `update` effects into
 actual `Cmd` and state changes.
 
 The additional `ignore` function is used to ignore events at a single place
 in the whole application. Compared to the commonly used `NoOp`, it takes an
-additionnal `String` description to be more informative in the debugger.
+additional `String` description to be more informative in the debugger.
 
 -}
 application :
@@ -185,15 +194,6 @@ application config =
 
 
 -- PERFORM
-
-
-{-| The partial top level model required to perform effects.
--}
-type alias Model r =
-    { r
-        | session : Session
-        , env : Env
-    }
 
 
 perform : (String -> msg) -> ( Model r, Effect msg ) -> ( Model r, Cmd msg )
