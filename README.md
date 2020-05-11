@@ -23,7 +23,7 @@ The [`init`](https://elm-doc-preview.netlify.app/Main?repo=dmy%2Felm-realworld-e
 There are several benefits to this approach that makes it a valuable pattern for complex applications:
 * All the effects are defined in a single [`Effect`](https://elm-doc-preview.netlify.app/Effect?repo=dmy%2Felm-realworld-example-app) module, which acts as an internal API for the whole application that is guaranteed to list every possible effect.
 
-* Effects can be inspected and tested, not like `Cmd` values. This allows to test all the application effects, including HTTP requests. See [avh4/elm-program-test](https://github.com/avh4/elm-program-test) and its [section about testing commands](https://elm-program-test.netlify.app/cmds.html#testing-programs-with-cmds).
+* Effects can be inspected and tested, not like `Cmd` values. This allows to test all the application effects, including HTTP requests.
 
 * Effects can represent a modification of top level model data, like the [Session](https://elm-doc-preview.netlify.app/Main?repo=dmy%2Felm-realworld-example-app#Model) when [logging in](https://elm-doc-preview.netlify.app/Effect?repo=dmy%2Felm-realworld-example-app#login), or the current page when an URL change is wanted by a subpage `update` function.
 
