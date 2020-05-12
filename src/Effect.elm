@@ -421,14 +421,14 @@ logout =
     ReplaceSession Session.guest
 
 
-{-| Fetch the logged user settings.
+{-| Fetch the logged in user settings.
 -}
 fetchSettings : (Result Errors Settings -> msg) -> Effect msg
 fetchSettings toMsg =
     FetchSettings toMsg Author.fetchUserSettings
 
 
-{-| Update the logged user settings.
+{-| Update the logged in user settings.
 -}
 updateSettings : (Result Errors Session -> msg) -> Cred -> Settings -> Effect msg
 updateSettings toMsg cred settings =
