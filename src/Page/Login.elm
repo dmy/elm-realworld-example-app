@@ -92,9 +92,9 @@ update msg model =
             , Effect.none
             )
 
-        CompletedAuthentication (Ok user) ->
+        CompletedAuthentication (Ok session) ->
             ( model
-            , Effect.login user
+            , Effect.login session
             )
 
 
