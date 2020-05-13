@@ -3,6 +3,7 @@
 > ### Elm codebase containing real world examples (CRUD, auth, advanced patterns, etc) that adheres to the [RealWorld](https://github.com/gothinkster/realworld) spec and API.
 
 
+### [Introduction](https://discourse.elm-lang.org/t/realworld-example-app-architected-with-the-effect-pattern/5753)
 ### [Demo](https://elm-realworld-example.netlify.app)
 ### [Documentation](https://elm-doc-preview.netlify.app/?repo=dmy/elm-realworld-example-app)
 
