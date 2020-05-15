@@ -4,6 +4,7 @@ module Page exposing
     , changeRouteTo
     , view, mapDocument
     , update
+    , subscriptions
     )
 
 {-| This module is responsible to handle subpages.
@@ -32,6 +33,11 @@ module Page exposing
 # Update
 
 @docs update
+
+
+# Subscriptions
+
+@docs subscriptions
 
 -}
 
@@ -302,3 +308,17 @@ updateWith toPage toMsg ( pageModel, effect ) =
     ( toPage pageModel
     , Effect.map toMsg effect
     )
+
+
+
+-- SUBSCRIPTIONS
+
+
+subscriptions : Page -> Sub Msg
+subscriptions page =
+    case page of
+        Login login ->
+            Sub.map GotLoginMsg (Login.subscriptions login)
+
+        _ ->
+            Sub.none

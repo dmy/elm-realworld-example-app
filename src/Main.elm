@@ -158,8 +158,11 @@ fromPage model ( page, effect ) =
 
 
 subscriptions : Model -> Sub Msg
-subscriptions _ =
-    Session.onChange GotSession
+subscriptions model =
+    Sub.batch
+        [ Session.onChange GotSession
+        , Sub.map GotPageMsg (Page.subscriptions model.page)
+        ]
 
 
 

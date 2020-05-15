@@ -1,8 +1,8 @@
-module Page.Login exposing (Model, Msg, init, view, update)
+module Page.Login exposing (Model, Msg, init, view, update, subscriptions)
 
 {-| The login page.
 
-@docs Model, Msg, init, view, update
+@docs Model, Msg, init, view, update, subscriptions
 
 -}
 
@@ -104,3 +104,14 @@ Useful for recording form fields!
 updateForm : (Form -> Form) -> Model -> ( Model, Effect Msg )
 updateForm transform model =
     ( { model | form = transform model.form }, Effect.none )
+
+
+
+-- SUBSCRIPTIONS
+
+
+{-| Login subscriptions
+-}
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    Sub.none
