@@ -314,6 +314,8 @@ updateWith toPage toMsg ( pageModel, effect ) =
 -- SUBSCRIPTIONS
 
 
+{-| Pages subscriptions
+-}
 subscriptions : Page -> Sub Msg
 subscriptions page =
     case page of
